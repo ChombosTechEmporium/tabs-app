@@ -1037,13 +1037,388 @@ if (!session || !currentUser) {
         </div>
       )}
 
-      <div className="max-w-2xl mx-auto px-4 py-6">
-        <div className="text-center py-12">
-          <h2 className="text-3xl font-bold mb-4">Welcome to Tabs!</h2>
-          <p className="text-gray-400 mb-8">Your expense tracking app is ready.</p>
-          <p className="text-emerald-400 text-sm">Full UI with all features coming in next update...</p>
+{view === 'home' && (
+        <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+          <div className="flex gap-2">
+            <button onClick={() => setView('home')} className="flex-1 py-3 px-4 rounded-lg font-semibold bg-emerald-500/20 border border-emerald-500/50 text-emerald-400">
+              Friends
+            </button>
+            <button onClick={() => setView('settled')} className="flex-1 py-3 px-4 rounded-lg font-semibold bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20">
+              Settled Tabs
+            </button>
+            <button onClick={() => setView('profile')} className="flex-1 py-3 px-4 rounded-lg font-semibold bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20">
+              Profile
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="glassmorphism rounded-2xl p-4 border">
+              <div className="flex items-center gap-2 text-emerald-400 mb-2">
+                <TrendingUp className="w-4 h-4" />
+                <span className="text-sm font-medium">You're owed</span>
+              </div>
+              <p className="text-3xl font-bold font-mono">
+                ${getAllBalances().filter(b => b.balance > 0).reduce((sum, b) => sum + b.balance, 0).toFixed(2)}
+              </p>
+            </div>
+            <div className="glassmorphism rounded-2xl p-4 border">
+              <div className="flex items-center gap-2 text-red-400 mb-2">
+                <TrendingDown className="w-4 h-4" />
+                <span className="text-sm font-medium">You owe</span>
+              </div>
+              <p className="text-3xl font-bold font-mono">
+                ${Math.abs(getAllBalances().filter(b => b.balance < 0).reduce((sum, b) => sum + b.balance, 0)).toFixed(2)}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-300">Friends</h2>
+              <button onClick={() => setView('addFriend')} className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 px-4 py-2 rounded-lg flex items-center gap-2 transition-all border border-emerald-500/30">
+                <UserPlus className="w-4 h-4" />
+                Add Friend
+              </button>
+            </div>
+
+            {friends.length === 0 ? (
+              <div className="glassmorphism rounded-2xl p-8 text-center border">
+                <User className="w-12 h-12 mx-auto mb-3 text-gray-600" />
+                <p className="text-gray-400">No friends added yet</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {friends.map(friend => {
+                  const balance = calculateNetBalance(friend.id);
+                  const isPositive = balance > 0;
+                  const isNegative = balance < 0;
+                  
+                  return (
+                    <div key={friend.id} onClick={() => { setSelectedFriend(friend); setView('friendDetail'); }}
+                      className={`glassmorphism rounded-xl p-4 cursor-pointer transition-all border tab-card ${isPositive ? 'border-emerald-500/30' : isNegative ? 'border-red-500/30' : ''}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="bg-slate-700/50 p-3 rounded-full">
+                            <User className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="font-semibold">{friend.name}</p>
+                            <p className="text-sm text-gray-400">@{friend.username}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          {Math.abs(balance) > 0.01 ? (
+                            <>
+                              <p className={`text-xl font-bold font-mono ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                                ${Math.abs(balance).toFixed(2)}
+                              </p>
+                              <p className="text-xs text-gray-500">{isPositive ? 'owes you' : 'you owe'}</p>
+                            </>
+                          ) : (
+                            <p className="text-gray-500 text-sm">settled up</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {friends.length > 0 && (
+            <button onClick={() => setView('addTab')} className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-500/20">
+              <Plus className="w-5 h-5" />
+              New Tab
+            </button>
+          )}
         </div>
-      </div>
+      )}
+
+      {view === 'addFriend' && (
+        <div className="max-w-2xl mx-auto px-4 py-6">
+          <button onClick={() => setView('home')} className="text-gray-400 hover:text-white mb-6 flex items-center gap-2">
+            ← Back
+          </button>
+          <div className="glassmorphism rounded-2xl p-6 border">
+            <h2 className="text-2xl font-bold mb-6">Add a Friend</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Search by username</label>
+                <input type="text" value={friendSearchQuery} onChange={(e) => handleFriendSearch(e.target.value)}
+                  placeholder="Type username..." className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
+              </div>
+              {searchResults.length > 0 && (
+                <div className="space-y-2">
+                  {searchResults.map(user => (
+                    <div key={user.id} className="bg-slate-800/30 border border-white/10 rounded-lg p-3 flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold">{user.name}</p>
+                        <p className="text-sm text-gray-400">@{user.username}</p>
+                      </div>
+                      <button onClick={() => addFriend(user.id)} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm">
+                        Add
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {view === 'addTab' && (
+        <div className="max-w-2xl mx-auto px-4 py-6">
+          <button onClick={() => setView('home')} className="text-gray-400 hover:text-white mb-6 flex items-center gap-2">← Back</button>
+          <div className="glassmorphism rounded-2xl p-6 border">
+            <h2 className="text-2xl font-bold mb-6">New Tab</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Friend</label>
+                <select value={tabForm.friendId || ''} onChange={(e) => setTabForm({ ...tabForm, friendId: e.target.value })}
+                  className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white">
+                  <option value="">Select a friend</option>
+                  {friends.map(friend => (
+                    <option key={friend.id} value={friend.id}>{friend.name} (@{friend.username})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Amount</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-xl">$</span>
+                  <input type="number" step="0.01" value={tabForm.amount} onChange={(e) => setTabForm({ ...tabForm, amount: e.target.value })}
+                    placeholder="0.00" className="w-full bg-slate-800/50 border border-white/10 rounded-xl pl-8 pr-4 py-3 text-white text-xl font-mono" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Type</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button onClick={() => setTabForm({ ...tabForm, type: 'owe' })}
+                    className={`py-3 rounded-xl font-semibold transition-all border ${tabForm.type === 'owe' ? 'bg-red-500/20 border-red-500/50 text-red-400' : 'bg-slate-800/30 border-white/10 text-gray-400'}`}>
+                    I owe them
+                  </button>
+                  <button onClick={() => setTabForm({ ...tabForm, type: 'owed' })}
+                    className={`py-3 rounded-xl font-semibold transition-all border ${tabForm.type === 'owed' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border-white/10 text-gray-400'}`}>
+                    They owe me
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Description</label>
+                <input type="text" value={tabForm.description} onChange={(e) => setTabForm({ ...tabForm, description: e.target.value })}
+                  placeholder="What's this for?" className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
+              </div>
+              <button onClick={addTab} disabled={!tabForm.amount || !tabForm.friendId}
+                className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-700 text-white font-semibold py-3 rounded-xl mt-6">
+                Create Tab
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {view === 'friendDetail' && selectedFriend && (
+        <div className="max-w-2xl mx-auto px-4 py-6">
+          <button onClick={() => setView('home')} className="text-gray-400 hover:text-white mb-6 flex items-center gap-2">← Back</button>
+          <div className="glassmorphism rounded-2xl p-6 border mb-6">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="bg-slate-700/50 p-4 rounded-full">
+                <User className="w-8 h-8" />
+              </div>
+              <div className="flex-1">
+                <h2 className="text-2xl font-bold">{selectedFriend.name}</h2>
+                <p className="text-gray-400">@{selectedFriend.username}</p>
+              </div>
+              <button onClick={() => deleteFriend(selectedFriend.id)} className="text-red-400/70 hover:text-red-400 p-2">
+                <Trash2 className="w-5 h-5" />
+              </button>
+            </div>
+            {(() => {
+              const balance = calculateNetBalance(selectedFriend.id);
+              const isPositive = balance > 0;
+              const isNegative = balance < 0;
+              return Math.abs(balance) > 0.01 ? (
+                <div>
+                  <div className={`rounded-xl p-4 border mb-4 ${isPositive ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                    <p className="text-sm text-gray-400 mb-1">Net balance</p>
+                    <p className={`text-3xl font-bold font-mono ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                      ${Math.abs(balance).toFixed(2)}
+                    </p>
+                    <p className="text-sm text-gray-400 mt-1">{isPositive ? `${selectedFriend.name} owes you` : `You owe ${selectedFriend.name}`}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={() => handleSettleClick(selectedFriend)}
+                      className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+                      <Check className="w-4 h-4" />
+                      Settle Up
+                    </button>
+                    {isPositive && (
+                      <button onClick={() => sendReminder(selectedFriend)}
+                        className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+                        <Bell className="w-4 h-4" />
+                        Remind
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-800/30 rounded-xl p-4 border border-white/10 text-center">
+                  <p className="text-emerald-400 font-semibold">✨ All settled up!</p>
+                </div>
+              );
+            })()}
+          </div>
+          <div className="space-y-3">
+            <h3 className="text-lg font-bold text-gray-300">Active Tabs</h3>
+            {getFriendTabs(selectedFriend.id, false).map(tab => (
+              <div key={tab.id} className="glassmorphism rounded-xl p-4 border tab-card">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex-1">
+                    <p className="font-semibold text-lg">{tab.description || 'No description'}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Calendar className="w-3 h-3 text-gray-500" />
+                      <span className="text-sm text-gray-400">{new Date(tab.date).toLocaleDateString()}</span>
+                      {tab.status === 'pending_settlement' && (
+                        <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">Pending Approval</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className={`text-2xl font-bold font-mono ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                      ${tab.amount}
+                    </p>
+                    <p className="text-xs text-gray-500">{tab.type === 'owed' ? 'they owe' : 'you owe'}</p>
+                  </div>
+                </div>
+                {tab.status === 'pending_settlement' && tab.type === 'owed' && (
+                  <div className="flex gap-2 mt-3">
+                    <button onClick={() => approveSettlement(selectedFriend.id)}
+                      className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2 rounded-lg text-sm">
+                      Approve
+                    </button>
+                    <button onClick={() => denySettlement(selectedFriend.id)}
+                      className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg text-sm">
+                      Deny
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {view === 'settled' && (
+        <div className="max-w-2xl mx-auto px-4 py-6">
+          <button onClick={() => setView('home')} className="text-gray-400 hover:text-white mb-6 flex items-center gap-2">← Back</button>
+          <h2 className="text-2xl font-bold mb-6">Settled Tabs</h2>
+          {Object.keys(getSettledTabs()).length === 0 ? (
+            <div className="glassmorphism rounded-2xl p-8 text-center border">
+              <HistoryIcon className="w-12 h-12 mx-auto mb-3 text-gray-600" />
+              <p className="text-gray-400">No settled tabs yet</p>
+            </div>
+          ) : (
+            Object.values(getSettledTabs()).map(({ friend, tabs: settledTabs }) => (
+              <div key={friend.id} className="glassmorphism rounded-2xl p-6 border mb-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="bg-slate-700/50 p-3 rounded-full">
+                    <User className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold">{friend.name}</h3>
+                    <p className="text-sm text-gray-400">@{friend.username} • {settledTabs.length} settled</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {settledTabs.map(tab => (
+                    <div key={tab.id} className="bg-slate-800/30 rounded-lg p-3 border border-white/10 opacity-60">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-semibold">{tab.description || 'No description'}</p>
+                          <p className="text-xs text-gray-500">Settled {new Date(tab.settled_at).toLocaleDateString()}</p>
+                        </div>
+                        <p className={`font-mono font-bold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ${tab.amount}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {view === 'profile' && (
+        <div className="max-w-2xl mx-auto px-4 py-6">
+          <button onClick={() => setView('home')} className="text-gray-400 hover:text-white mb-6 flex items-center gap-2">← Back</button>
+          <div className="glassmorphism rounded-2xl p-6 border">
+            <h2 className="text-2xl font-bold mb-6">Profile Settings</h2>
+            <div className="space-y-6">
+              <div className="flex flex-col items-center">
+                <div className="w-32 h-32 rounded-full bg-slate-700 flex items-center justify-center mb-4">
+                  <User className="w-16 h-16 text-gray-400" />
+                </div>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={(e) => e.target.files[0] && setProfilePictureFile(e.target.files[0])} className="hidden" />
+                {profilePictureFile ? (
+                  <div className="flex gap-2">
+                    <button onClick={() => uploadProfilePicture(profilePictureFile)} disabled={uploadingPicture}
+                      className="bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-700 text-white px-4 py-2 rounded-lg flex items-center gap-2">
+                      <Upload className="w-4 h-4" />
+                      {uploadingPicture ? 'Uploading...' : 'Upload'}
+                    </button>
+                    <button onClick={() => setProfilePictureFile(null)} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg">
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => fileInputRef.current?.click()}
+                    className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg flex items-center gap-2">
+                    <Camera className="w-4 h-4" />
+                    Change Picture
+                  </button>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Name (Display Name)</label>
+                {editingName ? (
+                  <div className="flex gap-2">
+                    <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
+                      className="flex-1 bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
+                    <button onClick={updateName} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl">
+                      <Check className="w-5 h-5" />
+                    </button>
+                    <button onClick={() => { setEditingName(false); setNewName(currentUser.name); }}
+                      className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-xl">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input type="text" value={currentUser.name} disabled className="flex-1 bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-gray-500" />
+                    <button onClick={() => setEditingName(true)} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-xl">
+                      <Edit2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                )}
+                <p className="text-xs text-gray-500 mt-1">This is your display name (editable)</p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Username</label>
+                <input type="text" value={currentUser.username} disabled className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-gray-500" />
+                <p className="text-xs text-gray-500 mt-1">Your unique @username (cannot be changed)</p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Email</label>
+                <input type="email" value={currentUser.email} disabled className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-gray-500" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
