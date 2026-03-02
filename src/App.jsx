@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, User, DollarSign, Bell, TrendingUp, TrendingDown, Calendar, Edit2, Check, X, UserPlus, ArrowRight, Users, Trash2, LogOut, Search, Camera, Upload, AlertCircle, History as HistoryIcon, Send, Eye, EyeOff } from 'lucide-react';
+import { Plus, User, DollarSign, Bell, TrendingUp, TrendingDown, Calendar, Edit2, Check, X, UserPlus, ArrowRight, Users, Trash2, LogOut, Search, Camera, Upload, AlertCircle, History as HistoryIcon, Send, Eye, EyeOff, Home as HomeIcon, UserCheck, UserX, ChevronDown, ChevronUp } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
-// ============================================
-// REPLACE THESE WITH YOUR ACTUAL SUPABASE CREDENTIALS
-// ============================================
 const supabaseUrl = 'https://lntmwatlmhcpfkicghcq.supabase.co';
 const supabaseAnonKey = 'sb_publishable_FVsvmDna-hn8hRcZbUG4vw_Rm01vClS';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
@@ -736,6 +733,576 @@ const deleteFriend = async (friendId) => {
       </div>
     );
   }
+ if (!session || !currentUser) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white flex items-center justify-center p-4">
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap');
+          * { font-family: 'DM Sans', sans-serif; }
+          .glassmorphism {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+          }
+        `}</style>
+
+        <div className="max-w-md w-full glassmorphism rounded-2xl p-8 border">
+          <div className="text-center mb-8">
+            <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-4 rounded-2xl inline-block mb-4">
+              <DollarSign className="w-12 h-12" />
+            </div>
+            <h1 className="text-3xl font-bold mb-2">
+              {authForm.mode === 'login' ? 'Welcome Back' : 'Create Account'}
+            </h1>
+            <p className="text-gray-400">
+              {authForm.mode === 'login' ? 'Log in to Tabs' : 'Join Tabs today'}
+            </p>
+          </div>
+
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 text-red-400 text-sm flex items-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={authForm.mode === 'login' ? handleLogin : handleSignup} className="space-y-4">
+            {authForm.mode === 'signup' && (
+              <>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Name</label>
+                  <input type="text" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })}
+                    placeholder="John Smith" className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-emerald-500/50 outline-none" required />
+                  <p className="text-xs text-gray-500 mt-1">Your display name (editable)</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Username</label>
+                  <input type="text" value={authForm.username} onChange={(e) => setAuthForm({ ...authForm, username: e.target.value.toLowerCase() })}
+                    placeholder="johnsmith" className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-emerald-500/50 outline-none" required />
+                  <p className="text-xs text-gray-500 mt-1">Your unique @username (permanent)</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Email</label>
+                  <input type="email" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+                    placeholder="john@example.com" className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-emerald-500/50 outline-none" required />
+                </div>
+              </>
+            )}
+
+            {authForm.mode === 'login' && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Email</label>
+                <input type="email" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+                  placeholder="your email" className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-emerald-500/50 outline-none" required />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Password</label>
+              <div className="relative">
+                <input type={authForm.showPassword ? "text" : "password"} value={authForm.password}
+                  onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} placeholder="••••••••"
+                  className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-emerald-500/50 outline-none" required />
+                <button type="button" onClick={() => setAuthForm({ ...authForm, showPassword: !authForm.showPassword })}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                  {authForm.showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+
+            {authForm.mode === 'signup' && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Confirm Password</label>
+                <input type={authForm.showPassword ? "text" : "password"} value={authForm.confirmPassword}
+                  onChange={(e) => setAuthForm({ ...authForm, confirmPassword: e.target.value })} placeholder="••••••••"
+                  className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-emerald-500/50 outline-none" required />
+              </div>
+            )}
+
+            {authForm.mode === 'login' && (
+              <div className="flex items-center">
+                <input type="checkbox" id="rememberMe" checked={authForm.rememberMe}
+                  onChange={(e) => setAuthForm({ ...authForm, rememberMe: e.target.checked })}
+                  className="w-4 h-4 rounded border-white/10 bg-slate-800/50 text-emerald-500" />
+                <label htmlFor="rememberMe" className="ml-2 text-sm text-gray-400">Remember me</label>
+              </div>
+            )}
+
+            <button type="submit" className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-semibold py-3 rounded-xl transition-all shadow-lg">
+              {authForm.mode === 'login' ? 'Log In' : 'Create Account'}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button onClick={() => setAuthForm({ ...authForm, mode: authForm.mode === 'login' ? 'signup' : 'login', error: '' })}
+              className="text-emerald-400 hover:text-emerald-300 text-sm">
+              {authForm.mode === 'login' ? "Don't have an account? Create account" : 'Already have an account? Login'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap');
+        * { font-family: 'DM Sans', sans-serif; }
+        .font-mono { font-family: 'Space Mono', monospace; }
+        .glassmorphism {
+          background: rgba(15, 23, 42, 0.6);
+          backdrop-filter: blur(12px);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .tab-card { transition: all 0.2s ease; }
+        .tab-card:hover { transform: translateX(4px); border-color: rgba(16, 185, 129, 0.4); }
+      `}</style>
+
+      <div className="glassmorphism sticky top-0 z-40 border-b border-white/10">
+        <div className="max-w-4xl mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-2 rounded-xl">
+                <DollarSign className="w-6 h-6" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">Tabs</h1>
+                <p className="text-xs text-gray-500">@{currentUser?.username}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setShowNotificationPanel(!showNotificationPanel)}
+                className="relative bg-slate-800/50 hover:bg-slate-700/50 p-2 rounded-lg transition-all border border-white/10">
+                <Bell className="w-5 h-5 text-gray-400" />
+                {notifications.length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                    {notifications.length}
+                  </span>
+                )}
+              </button>
+              <button onClick={handleLogout} className="bg-slate-800/50 hover:bg-slate-700/50 p-2 rounded-lg transition-all border border-white/10">
+                <LogOut className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-4 py-4">
+        <div className="flex gap-2 mb-6">
+          <button onClick={() => setView('home')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 ${view === 'home' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+            <HomeIcon className="w-4 h-4" />
+            Home
+          </button>
+          <button onClick={() => setView('friends')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 ${view === 'friends' || view === 'friendDetail' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+            <Users className="w-4 h-4" />
+            Friends
+          </button>
+          <button onClick={() => setView('history')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 ${view === 'history' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+            <HistoryIcon className="w-4 h-4" />
+            History
+          </button>
+          <button onClick={() => setView('profile')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 ${view === 'profile' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+            <User className="w-4 h-4" />
+            Profile
+          </button>
+        </div>
+{showNotificationPanel && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowNotificationPanel(false)}>
+            <div className="glassmorphism rounded-2xl p-6 max-w-md w-full border" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold">Notifications</h2>
+                <button onClick={() => setShowNotificationPanel(false)}>
+                  <X className="w-5 h-5 text-gray-400" />
+                </button>
+              </div>
+              {notifications.length === 0 ? (
+                <p className="text-gray-400 text-center py-8">No new notifications</p>
+              ) : (
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {notifications.map(notif => (
+                    <div key={notif.id} className="bg-slate-800/50 rounded-lg p-3 border border-white/10">
+                      <div className="flex justify-between items-start mb-1">
+                        <p className="font-semibold text-sm">{notif.title}</p>
+                        <button onClick={() => markNotificationRead(notif.id)} className="text-emerald-400 hover:text-emerald-300">
+                          <Check className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <p className="text-gray-400 text-sm">{notif.message}</p>
+                      {notif.type === 'friend_request' && (
+                        <div className="flex gap-2 mt-2">
+                          <button onClick={() => { acceptFriendRequest(notif.metadata.from_user_id); markNotificationRead(notif.id); }}
+                            className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-1 rounded text-xs">
+                            Accept
+                          </button>
+                          <button onClick={() => { rejectFriendRequest(notif.metadata.from_user_id); markNotificationRead(notif.id); }}
+                            className="flex-1 bg-red-500 hover:bg-red-600 text-white py-1 rounded text-xs">
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {showReminderToast && (
+          <div className="fixed bottom-4 right-4 bg-emerald-500 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-2 z-50">
+            <Check className="w-5 h-5" />
+            <span>Reminder sent!</span>
+          </div>
+        )}
+
+        {view === 'home' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="glassmorphism rounded-2xl p-4 border">
+                <div className="flex items-center gap-2 text-emerald-400 mb-2">
+                  <TrendingUp className="w-4 h-4" />
+                  <span className="text-sm font-medium">You're owed</span>
+                </div>
+                <p className="text-3xl font-bold font-mono">
+                  ${getAllBalances().filter(b => b.balance > 0).reduce((sum, b) => sum + b.balance, 0).toFixed(2)}
+                </p>
+              </div>
+              <div className="glassmorphism rounded-2xl p-4 border">
+                <div className="flex items-center gap-2 text-red-400 mb-2">
+                  <TrendingDown className="w-4 h-4" />
+                  <span className="text-sm font-medium">You owe</span>
+                </div>
+                <p className="text-3xl font-bold font-mono">
+                  ${Math.abs(getAllBalances().filter(b => b.balance < 0).reduce((sum, b) => sum + b.balance, 0)).toFixed(2)}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold text-gray-300">Active Tabs</h2>
+                <button onClick={() => setView('addTab')} className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 px-4 py-2 rounded-lg flex items-center gap-2 transition-all border border-emerald-500/30">
+                  <Plus className="w-4 h-4" />
+                  New Tab
+                </button>
+              </div>
+
+              {Object.keys(getMyActiveTabs()).length === 0 ? (
+                <div className="glassmorphism rounded-2xl p-8 text-center border">
+                  <DollarSign className="w-12 h-12 mx-auto mb-3 text-gray-600" />
+                  <p className="text-gray-400">No active tabs</p>
+                  <p className="text-gray-500 text-sm mt-2">Create a tab to get started</p>
+                </div>
+              ) : (
+                Object.values(getMyActiveTabs()).map(({ friend, tabs: friendTabs, balance }) => (
+                  <div key={friend.id} onClick={() => { setSelectedFriend(friend); setView('friendDetail'); }}
+                    className="glassmorphism rounded-xl p-4 cursor-pointer transition-all border tab-card hover:border-emerald-500/30">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-slate-700/50 p-3 rounded-full">
+                          <User className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="font-semibold">{friend.name}</p>
+                          <p className="text-sm text-gray-400">@{friend.username} • {friendTabs.length} tab{friendTabs.length !== 1 ? 's' : ''}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-xl font-bold font-mono ${balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ${Math.abs(balance).toFixed(2)}
+                        </p>
+                        <p className="text-xs text-gray-500">{balance > 0 ? 'owes you' : 'you owe'}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {friendTabs.slice(0, 3).map(tab => (
+                        <div key={tab.id} className="bg-slate-800/30 rounded-lg p-2 text-sm">
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-300">{tab.description || 'No description'}</span>
+                            <span className={`font-mono font-semibold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                              ${tab.amount}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                      {friendTabs.length > 3 && (
+                        <p className="text-xs text-gray-500 text-center">+ {friendTabs.length - 3} more</p>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {view === 'friends' && (
+          <div className="space-y-6">
+            <div className="glassmorphism rounded-2xl p-4 border">
+              <div className="flex items-center gap-2 mb-3">
+                <Search className="w-5 h-5 text-gray-400" />
+                <input type="text" value={userSearchQuery} onChange={(e) => { setUserSearchQuery(e.target.value); searchUsers(e.target.value); }}
+                  placeholder="Search users by username..." className="flex-1 bg-transparent border-none outline-none text-white" />
+              </div>
+              {searchResults.length > 0 && (
+                <div className="space-y-2 mt-3 border-t border-white/10 pt-3">
+                  {searchResults.map(user => (
+                    <div key={user.id} className="bg-slate-800/30 border border-white/10 rounded-lg p-3 flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold">{user.name}</p>
+                        <p className="text-sm text-gray-400">@{user.username}</p>
+                      </div>
+                      <button onClick={() => sendFriendRequest(user.id)}
+                        className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+                        <UserPlus className="w-4 h-4" />
+                        Add
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {(pendingFriends.incoming?.length > 0 || pendingFriends.outgoing?.length > 0) && (
+              <div className="space-y-3">
+                <h3 className="text-lg font-bold text-gray-300">Pending Requests</h3>
+                {pendingFriends.incoming?.map(friend => (
+                  <div key={friend.id} className="glassmorphism rounded-xl p-4 border border-yellow-500/30">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-slate-700/50 p-3 rounded-full">
+                          <User className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="font-semibold">{friend.name}</p>
+                          <p className="text-sm text-gray-400">@{friend.username}</p>
+                          <p className="text-xs text-yellow-400">Incoming request</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => acceptFriendRequest(friend.id)}
+                          className="bg-emerald-500 hover:bg-emerald-600 text-white p-2 rounded-lg">
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => rejectFriendRequest(friend.id)}
+                          className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {pendingFriends.outgoing?.map(friend => (
+                  <div key={friend.id} className="glassmorphism rounded-xl p-4 border border-gray-500/30">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-slate-700/50 p-3 rounded-full">
+                          <User className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="font-semibold">{friend.name}</p>
+                          <p className="text-sm text-gray-400">@{friend.username}</p>
+                          <p className="text-xs text-gray-500">Request sent</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-gray-300">Friends ({friends.length})</h3>
+                <input type="text" value={friendSearchQuery} onChange={(e) => setFriendSearchQuery(e.target.value)}
+                  placeholder="Filter friends..." className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white w-48" />
+              </div>
+              {friends.filter(f => f.username.toLowerCase().includes(friendSearchQuery.toLowerCase()) || 
+                                    f.name.toLowerCase().includes(friendSearchQuery.toLowerCase())).length === 0 ? (
+                <div className="glassmorphism rounded-2xl p-8 text-center border">
+                  <Users className="w-12 h-12 mx-auto mb-3 text-gray-600" />
+                  <p className="text-gray-400">No friends yet</p>
+                  <p className="text-gray-500 text-sm mt-2">Search for users above to send friend requests</p>
+                </div>
+              ) : (
+                friends.filter(f => f.username.toLowerCase().includes(friendSearchQuery.toLowerCase()) || 
+                                     f.name.toLowerCase().includes(friendSearchQuery.toLowerCase())).map(friend => {
+                  const balance = calculateNetBalance(friend.id);
+                  return (
+                    <div key={friend.id} onClick={() => { setSelectedFriend(friend); setView('friendDetail'); }}
+                      className="glassmorphism rounded-xl p-4 cursor-pointer transition-all border tab-card hover:border-emerald-500/30">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="bg-slate-700/50 p-3 rounded-full">
+                            <User className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="font-semibold">{friend.name}</p>
+                            <p className="text-sm text-gray-400">@{friend.username}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          {Math.abs(balance) > 0.01 ? (
+                            <>
+                              <p className={`text-lg font-bold font-mono ${balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                ${Math.abs(balance).toFixed(2)}
+                              </p>
+                              <p className="text-xs text-gray-500">{balance > 0 ? 'owes you' : 'you owe'}</p>
+                            </>
+                          ) : (
+                            <p className="text-gray-500 text-sm">settled</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {view === 'friendDetail' && selectedFriend && (
+          <div className="space-y-6">
+            <button onClick={() => setView('friends')} className="text-gray-400 hover:text-white flex items-center gap-2">
+              ← Back to Friends
+            </button>
+
+            <div className="glassmorphism rounded-2xl p-6 border">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-4">
+                  <div className="bg-slate-700/50 p-4 rounded-full">
+                    <User className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold">{selectedFriend.name}</h2>
+                    <p className="text-gray-400">@{selectedFriend.username}</p>
+                  </div>
+                </div>
+                <button onClick={() => deleteFriend(selectedFriend.id)} className="text-red-400/70 hover:text-red-400 p-2">
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              </div>
+
+              {(() => {
+                const balance = calculateNetBalance(selectedFriend.id);
+                const activeTabs = getFriendTabs(selectedFriend.id, false);
+                return (
+                  <div>
+                    {Math.abs(balance) > 0.01 ? (
+                      <div className={`rounded-xl p-4 border mb-4 ${balance > 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                        <p className="text-sm text-gray-400 mb-1">Net balance</p>
+                        <p className={`text-3xl font-bold font-mono ${balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ${Math.abs(balance).toFixed(2)}
+                        </p>
+                        <p className="text-sm text-gray-400 mt-1">{balance > 0 ? `${selectedFriend.name} owes you` : `You owe ${selectedFriend.name}`}</p>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-800/30 rounded-xl p-4 border border-white/10 text-center mb-4">
+                        <p className="text-emerald-400 font-semibold">✨ All settled up!</p>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <button onClick={() => { setTabForm({ ...tabForm, friendId: selectedFriend.id }); setView('addTab'); }}
+                        className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+                        <Plus className="w-4 h-4" />
+                        Start Tab
+                      </button>
+                      {Math.abs(balance) > 0.01 && (
+                        <button onClick={() => handleSettleClick(selectedFriend)}
+                          className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+                          <Check className="w-4 h-4" />
+                          Settle Tab
+                        </button>
+                      )}
+                      {balance < -0.01 && (
+                        <button onClick={() => sendReminder(selectedFriend)}
+                          className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+                          <Bell className="w-4 h-4" />
+                          Remind
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-lg font-bold text-gray-300">Active Tabs</h3>
+              {getFriendTabs(selectedFriend.id, false).length === 0 ? (
+                <div className="glassmorphism rounded-2xl p-6 text-center border">
+                  <p className="text-gray-400">No active tabs</p>
+                </div>
+              ) : (
+                getFriendTabs(selectedFriend.id, false).map(tab => (
+                  <div key={tab.id} className="glassmorphism rounded-xl p-4 border">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="font-semibold text-lg">{tab.description || 'No description'}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Calendar className="w-3 h-3 text-gray-500" />
+                          <span className="text-sm text-gray-400">{new Date(tab.date).toLocaleDateString()}</span>
+                          {tab.status === 'pending_settlement' && (
+                            <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">Pending Approval</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-2xl font-bold font-mono ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ${tab.amount}
+                        </p>
+                        <p className="text-xs text-gray-500">{tab.type === 'owed' ? 'they owe' : 'you owe'}</p>
+                      </div>
+                    </div>
+                    {tab.status === 'pending_settlement' && tab.type === 'owed' && (
+                      <div className="flex gap-2 mt-3">
+                        <button onClick={() => approveSettlement(selectedFriend.id)}
+                          className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2 rounded-lg text-sm">
+                          Approve
+                        </button>
+                        <button onClick={() => denySettlement(selectedFriend.id)}
+                          className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg text-sm">
+                          Deny
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {getSettledTabs()[selectedFriend.id] && (
+              <div className="space-y-3">
+                <button onClick={() => toggleSettledExpansion(selectedFriend.id)}
+                  className="w-full flex items-center justify-between text-left text-gray-400 hover:text-white">
+                  <h3 className="text-lg font-bold">Settled Tabs ({getSettledTabs()[selectedFriend.id].tabs.length})</h3>
+                  {expandedSettledTabs[selectedFriend.id] ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+                {expandedSettledTabs[selectedFriend.id] && (
+                  <div className="space-y-2">
+                    {getSettledTabs()[selectedFriend.id].tabs.map(tab => (
+                      <div key={tab.id} className="glassmorphism rounded-lg p-3 border opacity-60">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-semibold">{tab.description || 'No description'}</p>
+                            <p className="text-xs text-gray-500">Settled {new Date(tab.settled_at).toLocaleDateString()}</p>
+                          </div>
+                          <p className={`font-mono font-bold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                            ${tab.amount}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 {view === 'addTab' && (
           <div className="space-y-6">
             <button onClick={() => setView('home')} className="text-gray-400 hover:text-white flex items-center gap-2">← Back</button>
