@@ -12,7 +12,7 @@ export default function TabsApp() {
   const [loading, setLoading] = useState(true);
   
   const [friends, setFriends] = useState([]);
-  const [pendingFriends, setPendingFriends] = useState([]);
+  const [pendingFriends, setPendingFriends] = useState({ incoming: [], outgoing: [] });
   const [tabs, setTabs] = useState([]);
   const [groups, setGroups] = useState([]);
   const [groupExpenses, setGroupExpenses] = useState([]);
@@ -23,10 +23,10 @@ export default function TabsApp() {
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [showNotificationPanel, setShowNotificationPanel] = useState(false);
   const [friendSearchQuery, setFriendSearchQuery] = useState('');
-  const [userSearchQuery, setUserSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
   const [error, setError] = useState('');
   const [expandedSettledTabs, setExpandedSettledTabs] = useState({});
+  const [showBreakdown, setShowBreakdown] = useState(null);
+  const [editingExpense, setEditingExpense] = useState(null);
   
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [settleModalData, setSettleModalData] = useState(null);
@@ -63,6 +63,13 @@ export default function TabsApp() {
     paidBy: null,
     splitWith: [],
     date: new Date().toISOString().split('T')[0]
+  });
+  
+  const [editExpenseForm, setEditExpenseForm] = useState({
+    amount: '',
+    description: '',
+    date: '',
+    reason: ''
   });
   
   const [profilePictureFile, setProfilePictureFile] = useState(null);
@@ -145,31 +152,22 @@ export default function TabsApp() {
   };
 
   const loadPendingFriends = async (userId) => {
-    const { data: outgoing, error: outError } = await supabase
+    const { data: outgoing } = await supabase
       .from('friendships')
-      .select('friend:users!friendships_friend_user_id_fkey(id, username, name, profile_picture_url), status')
+      .select('friend:users!friendships_friend_user_id_fkey(id, username, name, profile_picture_url)')
       .eq('user_id', userId)
       .eq('status', 'pending');
     
-    const { data: incoming, error: inError } = await supabase
+    const { data: incoming } = await supabase
       .from('friendships')
-      .select('requester:users!friendships_user_id_fkey(id, username, name, profile_picture_url), status')
+      .select('requester:users!friendships_user_id_fkey(id, username, name, profile_picture_url)')
       .eq('friend_user_id', userId)
       .eq('status', 'pending');
     
-    if (!outError && outgoing) {
-      setPendingFriends(prev => ({
-        ...prev,
-        outgoing: outgoing.map(f => ({ ...f.friend, direction: 'outgoing' }))
-      }));
-    }
-    
-    if (!inError && incoming) {
-      setPendingFriends(prev => ({
-        ...prev,
-        incoming: incoming.map(f => ({ ...f.requester, direction: 'incoming' }))
-      }));
-    }
+    setPendingFriends({
+      outgoing: outgoing ? outgoing.map(f => ({ ...f.friend, direction: 'outgoing' })) : [],
+      incoming: incoming ? incoming.map(f => ({ ...f.requester, direction: 'incoming' })) : []
+    });
   };
 
   const loadTabs = async (userId) => {
@@ -186,11 +184,15 @@ export default function TabsApp() {
   const loadGroups = async (userId) => {
     const { data, error } = await supabase
       .from('group_members')
-      .select('group:groups(*)')
+      .select('group:groups(*), members:group_members(user:users(id, username, name, profile_picture_url))')
       .eq('user_id', userId);
     
     if (!error && data) {
-      setGroups(data.map(gm => gm.group));
+      const groupsWithMembers = data.map(item => ({
+        ...item.group,
+        members: item.members?.map(m => m.user) || []
+      }));
+      setGroups(groupsWithMembers);
     }
   };
 
@@ -244,8 +246,7 @@ export default function TabsApp() {
       .eq('id', notificationId);
     await loadNotifications(currentUser.id);
   };
-
-  const handleSignup = async (e) => {
+const handleSignup = async (e) => {
     e.preventDefault();
     setError('');
     
@@ -270,7 +271,7 @@ export default function TabsApp() {
         return;
       }
       
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { error: authError } = await supabase.auth.signUp({
         email: authForm.email,
         password: authForm.password,
         options: {
@@ -308,28 +309,6 @@ export default function TabsApp() {
     await supabase.auth.signOut();
   };
 
-  const searchUsers = async (query) => {
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, username, name, profile_picture_url')
-      .ilike('username', `%${query}%`)
-      .neq('id', currentUser.id)
-      .limit(10);
-    if (!error && data) {
-      const friendIds = friends.map(f => f.id);
-      const pendingIds = [
-        ...(pendingFriends.outgoing || []).map(f => f.id),
-        ...(pendingFriends.incoming || []).map(f => f.id)
-      ];
-      const filtered = data.filter(u => !friendIds.includes(u.id) && !pendingIds.includes(u.id));
-      setSearchResults(filtered);
-    }
-  };
-
   const sendFriendRequest = async (friendUserId) => {
     try {
       await supabase.from('friendships').insert([
@@ -345,8 +324,7 @@ export default function TabsApp() {
       }]);
       
       await loadPendingFriends(currentUser.id);
-      setUserSearchQuery('');
-      setSearchResults([]);
+      setFriendSearchQuery('');
       alert('Friend request sent!');
     } catch (err) {
       setError(err.message);
@@ -384,7 +362,8 @@ export default function TabsApp() {
       setError(err.message);
     }
   };
-const deleteFriend = async (friendId) => {
+
+  const deleteFriend = async (friendId) => {
     if (!confirm('Remove this friend? All tabs will be deleted.')) return;
     try {
       await supabase.from('friendships').delete()
@@ -432,8 +411,28 @@ const deleteFriend = async (friendId) => {
     }
   };
 
+  const updateTab = async (tabId) => {
+    try {
+      const { error } = await supabase
+        .from('tabs')
+        .update({
+          amount: parseFloat(editExpenseForm.amount),
+          description: editExpenseForm.description,
+          date: editExpenseForm.date
+        })
+        .eq('id', tabId);
+      
+      if (error) throw error;
+      await loadTabs(currentUser.id);
+      setEditingExpense(null);
+      alert('Expense updated!');
+    } catch (err) {
+      setError('Failed to update expense');
+    }
+  };
+
   const deleteTab = async (tabId) => {
-    if (!confirm('Delete this tab?')) return;
+    if (!confirm('Delete this expense?')) return;
     try {
       await supabase.from('tabs').delete().eq('id', tabId);
       await loadTabs(currentUser.id);
@@ -462,12 +461,10 @@ const deleteFriend = async (friendId) => {
     try {
       if (isOwed) {
         for (const tab of friendTabs) {
-          if (!tab.isGroupExpense) {
-            await supabase.from('tabs').update({ 
-              status: 'settled',
-              settled_at: new Date().toISOString()
-            }).eq('id', tab.id);
-          }
+          await supabase.from('tabs').update({ 
+            status: 'settled',
+            settled_at: new Date().toISOString()
+          }).eq('id', tab.id);
         }
         await supabase.from('notifications').insert([{
           user_id: friend.id,
@@ -479,12 +476,10 @@ const deleteFriend = async (friendId) => {
         alert(`All tabs with ${friend.username} have been settled!`);
       } else {
         for (const tab of friendTabs) {
-          if (!tab.isGroupExpense) {
-            await supabase.from('tabs').update({ 
-              status: 'pending_settlement',
-              settlement_requested_at: new Date().toISOString()
-            }).eq('id', tab.id);
-          }
+          await supabase.from('tabs').update({ 
+            status: 'pending_settlement',
+            settlement_requested_at: new Date().toISOString()
+          }).eq('id', tab.id);
         }
         alert(`Settlement request sent to ${friend.username}!`);
       }
@@ -572,6 +567,77 @@ const deleteFriend = async (friendId) => {
     }
   };
 
+  const addGroup = async () => {
+    if (!groupForm.name.trim() || groupForm.selectedFriends.length < 1) {
+      setError('Please enter a group name and select at least 1 friend');
+      return;
+    }
+    
+    try {
+      const { data: newGroup, error: groupError } = await supabase
+        .from('groups')
+        .insert([{ name: groupForm.name, created_by_user_id: currentUser.id }])
+        .select()
+        .single();
+      
+      if (groupError) throw groupError;
+      
+      const members = [currentUser.id, ...groupForm.selectedFriends].map(userId => ({
+        group_id: newGroup.id,
+        user_id: userId
+      }));
+      await supabase.from('group_members').insert(members);
+      await loadGroups(currentUser.id);
+      setGroupForm({ name: '', selectedFriends: [] });
+      setView('groups');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const addGroupExpense = async () => {
+    if (!groupExpenseForm.amount || !groupExpenseForm.paidBy || groupExpenseForm.splitWith.length === 0) {
+      setError('Please fill in all fields');
+      return;
+    }
+    
+    try {
+      const { data: newExpense, error: expenseError } = await supabase
+        .from('group_expenses')
+        .insert([{
+          group_id: selectedGroup.id,
+          paid_by_user_id: groupExpenseForm.paidBy,
+          amount: parseFloat(groupExpenseForm.amount),
+          description: groupExpenseForm.description,
+          date: groupExpenseForm.date
+        }])
+        .select()
+        .single();
+      
+      if (expenseError) throw expenseError;
+      
+      const perPerson = parseFloat(groupExpenseForm.amount) / groupExpenseForm.splitWith.length;
+      const splits = groupExpenseForm.splitWith.map(userId => ({
+        expense_id: newExpense.id,
+        user_id: userId,
+        amount: perPerson,
+        status: 'active'
+      }));
+      await supabase.from('group_expense_splits').insert(splits);
+      await loadGroupExpenses(currentUser.id);
+      setGroupExpenseForm({
+        amount: '',
+        description: '',
+        paidBy: null,
+        splitWith: [],
+        date: new Date().toISOString().split('T')[0]
+      });
+      setView('groupDetail');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const updateName = async () => {
     if (!newName.trim()) return;
     try {
@@ -620,12 +686,11 @@ const deleteFriend = async (friendId) => {
       setUploadingPicture(false);
     }
   };
-
-  const calculateNetBalance = (friendId) => {
+const calculateNetBalance = (friendId) => {
     if (!currentUser) return 0;
     
     const relevantTabs = tabs.filter(t => 
-      t.status === 'active' && (
+      (t.status === 'active' || t.status === 'pending_settlement') && (
         (t.from_user_id === currentUser.id && t.to_user_id === friendId) ||
         (t.from_user_id === friendId && t.to_user_id === currentUser.id)
       )
@@ -647,23 +712,26 @@ const deleteFriend = async (friendId) => {
     })).filter(b => Math.abs(b.balance) > 0.01);
   };
 
-  const getFriendTabs = (friendId, includeSettled = false) => {
-    const regularTabs = tabs.filter(t => {
+  const getFriendTabs = (friendId, includeSettled = false, onlySettled = false) => {
+    let filteredTabs = tabs.filter(t => {
       const isBetweenUsers = (t.from_user_id === currentUser.id && t.to_user_id === friendId) ||
                              (t.from_user_id === friendId && t.to_user_id === currentUser.id);
-      return isBetweenUsers && (includeSettled || t.status !== 'settled');
-    }).map(t => ({
+      if (onlySettled) return isBetweenUsers && t.status === 'settled';
+      if (includeSettled) return isBetweenUsers;
+      return isBetweenUsers && t.status !== 'settled';
+    });
+    
+    return filteredTabs.map(t => ({
       ...t,
       type: t.from_user_id === currentUser.id ? 'owe' : 'owed',
       amount: parseFloat(t.amount).toFixed(2)
-    }));
-    return regularTabs.sort((a, b) => new Date(b.date) - new Date(a.date));
+    })).sort((a, b) => new Date(b.date) - new Date(a.date));
   };
 
   const getMyActiveTabs = () => {
     if (!currentUser) return {};
     
-    const activeTabs = tabs.filter(t => t.status === 'active');
+    const activeTabs = tabs.filter(t => t.status === 'active' || t.status === 'pending_settlement');
     const grouped = {};
     
     friends.forEach(friend => {
@@ -674,6 +742,7 @@ const deleteFriend = async (friendId) => {
       
       if (friendTabs.length > 0) {
         const balance = calculateNetBalance(friend.id);
+        const hasPending = friendTabs.some(t => t.status === 'pending_settlement');
         grouped[friend.id] = {
           friend,
           tabs: friendTabs.map(t => ({
@@ -681,7 +750,8 @@ const deleteFriend = async (friendId) => {
             type: t.from_user_id === currentUser.id ? 'owe' : 'owed',
             amount: parseFloat(t.amount).toFixed(2)
           })).sort((a, b) => new Date(b.date) - new Date(a.date)),
-          balance
+          balance,
+          hasPending
         };
       }
     });
@@ -701,13 +771,22 @@ const deleteFriend = async (friendId) => {
       );
       
       if (friendSettled.length > 0) {
+        const sortedTabs = friendSettled.sort((a, b) => new Date(b.settled_at) - new Date(a.settled_at));
+        const earliestDate = new Date(Math.min(...friendSettled.map(t => new Date(t.date))));
+        const latestDate = new Date(Math.max(...friendSettled.map(t => new Date(t.date))));
+        
         grouped[friend.id] = {
           friend,
-          tabs: friendSettled.map(t => ({
+          tabs: sortedTabs.map(t => ({
             ...t,
             type: t.from_user_id === currentUser.id ? 'owe' : 'owed',
             amount: parseFloat(t.amount).toFixed(2)
-          })).sort((a, b) => new Date(b.settled_at) - new Date(a.settled_at))
+          })),
+          totalAmount: friendSettled.reduce((sum, t) => sum + parseFloat(t.amount), 0),
+          count: friendSettled.length,
+          earliestDate,
+          latestDate,
+          settledDate: sortedTabs[0].settled_at
         };
       }
     });
@@ -719,6 +798,32 @@ const deleteFriend = async (friendId) => {
       ...prev,
       [friendId]: !prev[friendId]
     }));
+  };
+
+  const toggleFriendInGroup = (friendId) => {
+    setGroupForm(prev => ({
+      ...prev,
+      selectedFriends: prev.selectedFriends.includes(friendId)
+        ? prev.selectedFriends.filter(id => id !== friendId)
+        : [...prev.selectedFriends, friendId]
+    }));
+  };
+
+  const toggleMemberInExpense = (memberId) => {
+    setGroupExpenseForm(prev => ({
+      ...prev,
+      splitWith: prev.splitWith.includes(memberId)
+        ? prev.splitWith.filter(id => id !== memberId)
+        : [...prev.splitWith, memberId]
+    }));
+  };
+
+  const hasActiveTabWithFriend = (friendId) => {
+    return tabs.some(t => 
+      (t.status === 'active' || t.status === 'pending_settlement') &&
+      ((t.from_user_id === currentUser.id && t.to_user_id === friendId) ||
+       (t.from_user_id === friendId && t.to_user_id === currentUser.id))
+    );
   };
 
   if (loading) {
@@ -733,7 +838,7 @@ const deleteFriend = async (friendId) => {
       </div>
     );
   }
- if (!session || !currentUser) {
+if (!session || !currentUser) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white flex items-center justify-center p-4">
         <style>{`
@@ -890,20 +995,24 @@ const deleteFriend = async (friendId) => {
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-4">
-        <div className="flex gap-2 mb-6">
-          <button onClick={() => setView('home')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 ${view === 'home' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+        <div className="flex gap-2 mb-6 overflow-x-auto">
+          <button onClick={() => setView('home')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 whitespace-nowrap ${view === 'home' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
             <HomeIcon className="w-4 h-4" />
             Home
           </button>
-          <button onClick={() => setView('friends')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 ${view === 'friends' || view === 'friendDetail' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+          <button onClick={() => setView('friends')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 whitespace-nowrap ${view === 'friends' || view === 'friendDetail' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
             <Users className="w-4 h-4" />
             Friends
           </button>
-          <button onClick={() => setView('history')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 ${view === 'history' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+          <button onClick={() => setView('groups')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 whitespace-nowrap ${view === 'groups' || view === 'groupDetail' || view === 'addGroup' || view === 'addGroupExpense' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+            <Users className="w-4 h-4" />
+            Groups
+          </button>
+          <button onClick={() => setView('history')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 whitespace-nowrap ${view === 'history' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
             <HistoryIcon className="w-4 h-4" />
             History
           </button>
-          <button onClick={() => setView('profile')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 ${view === 'profile' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+          <button onClick={() => setView('profile')} className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 whitespace-nowrap ${view === 'profile' ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border border-white/10 text-gray-400 hover:border-white/20'}`}>
             <User className="w-4 h-4" />
             Profile
           </button>
@@ -957,10 +1066,56 @@ const deleteFriend = async (friendId) => {
           </div>
         )}
 
+        {showBreakdown && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowBreakdown(null)}>
+            <div className="glassmorphism rounded-2xl p-6 max-w-2xl w-full border max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold">{showBreakdown.type === 'owed' ? "You're Owed" : "You Owe"}</h2>
+                <button onClick={() => setShowBreakdown(null)}>
+                  <X className="w-5 h-5 text-gray-400" />
+                </button>
+              </div>
+              <div className="space-y-4">
+                {showBreakdown.balances.map(({ friend, balance }) => (
+                  <div key={friend.id} className="glassmorphism rounded-xl p-4 border">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-slate-700/50 p-3 rounded-full">
+                          <User className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="font-semibold">{friend.name}</p>
+                          <p className="text-sm text-gray-400">@{friend.username}</p>
+                        </div>
+                      </div>
+                      <p className={`text-xl font-bold font-mono ${showBreakdown.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                        ${Math.abs(balance).toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      {getFriendTabs(friend.id, false).map(tab => (
+                        <div key={tab.id} className="bg-slate-800/30 rounded-lg p-2 text-sm flex justify-between">
+                          <span className="text-gray-300">{tab.description || 'No description'}</span>
+                          <span className={`font-mono font-semibold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                            ${tab.amount}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {view === 'home' && (
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
-              <div className="glassmorphism rounded-2xl p-4 border">
+              <button onClick={() => {
+                const owed = getAllBalances().filter(b => b.balance > 0);
+                if (owed.length > 0) setShowBreakdown({ type: 'owed', balances: owed });
+              }} className="glassmorphism rounded-2xl p-4 border hover:border-emerald-500/30 transition-all cursor-pointer">
                 <div className="flex items-center gap-2 text-emerald-400 mb-2">
                   <TrendingUp className="w-4 h-4" />
                   <span className="text-sm font-medium">You're owed</span>
@@ -968,8 +1123,11 @@ const deleteFriend = async (friendId) => {
                 <p className="text-3xl font-bold font-mono">
                   ${getAllBalances().filter(b => b.balance > 0).reduce((sum, b) => sum + b.balance, 0).toFixed(2)}
                 </p>
-              </div>
-              <div className="glassmorphism rounded-2xl p-4 border">
+              </button>
+              <button onClick={() => {
+                const owing = getAllBalances().filter(b => b.balance < 0);
+                if (owing.length > 0) setShowBreakdown({ type: 'owing', balances: owing });
+              }} className="glassmorphism rounded-2xl p-4 border hover:border-red-500/30 transition-all cursor-pointer">
                 <div className="flex items-center gap-2 text-red-400 mb-2">
                   <TrendingDown className="w-4 h-4" />
                   <span className="text-sm font-medium">You owe</span>
@@ -977,7 +1135,7 @@ const deleteFriend = async (friendId) => {
                 <p className="text-3xl font-bold font-mono">
                   ${Math.abs(getAllBalances().filter(b => b.balance < 0).reduce((sum, b) => sum + b.balance, 0)).toFixed(2)}
                 </p>
-              </div>
+              </button>
             </div>
 
             <div className="space-y-3">
@@ -996,17 +1154,20 @@ const deleteFriend = async (friendId) => {
                   <p className="text-gray-500 text-sm mt-2">Create a tab to get started</p>
                 </div>
               ) : (
-                Object.values(getMyActiveTabs()).map(({ friend, tabs: friendTabs, balance }) => (
+                Object.values(getMyActiveTabs()).map(({ friend, tabs: friendTabs, balance, hasPending }) => (
                   <div key={friend.id} onClick={() => { setSelectedFriend(friend); setView('friendDetail'); }}
                     className="glassmorphism rounded-xl p-4 cursor-pointer transition-all border tab-card hover:border-emerald-500/30">
-                    <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="bg-slate-700/50 p-3 rounded-full">
                           <User className="w-5 h-5" />
                         </div>
                         <div>
                           <p className="font-semibold">{friend.name}</p>
-                          <p className="text-sm text-gray-400">@{friend.username} • {friendTabs.length} tab{friendTabs.length !== 1 ? 's' : ''}</p>
+                          <p className="text-sm text-gray-400">@{friend.username} • {friendTabs.length} expense{friendTabs.length !== 1 ? 's' : ''}</p>
+                          {hasPending && (
+                            <p className="text-xs text-yellow-400 mt-1">⏳ Pending Approval</p>
+                          )}
                         </div>
                       </div>
                       <div className="text-right">
@@ -1016,55 +1177,14 @@ const deleteFriend = async (friendId) => {
                         <p className="text-xs text-gray-500">{balance > 0 ? 'owes you' : 'you owe'}</p>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      {friendTabs.slice(0, 3).map(tab => (
-                        <div key={tab.id} className="bg-slate-800/30 rounded-lg p-2 text-sm">
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-300">{tab.description || 'No description'}</span>
-                            <span className={`font-mono font-semibold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
-                              ${tab.amount}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                      {friendTabs.length > 3 && (
-                        <p className="text-xs text-gray-500 text-center">+ {friendTabs.length - 3} more</p>
-                      )}
-                    </div>
                   </div>
                 ))
               )}
             </div>
           </div>
         )}
-
-        {view === 'friends' && (
+{view === 'friends' && (
           <div className="space-y-6">
-            <div className="glassmorphism rounded-2xl p-4 border">
-              <div className="flex items-center gap-2 mb-3">
-                <Search className="w-5 h-5 text-gray-400" />
-                <input type="text" value={userSearchQuery} onChange={(e) => { setUserSearchQuery(e.target.value); searchUsers(e.target.value); }}
-                  placeholder="Search users by username..." className="flex-1 bg-transparent border-none outline-none text-white" />
-              </div>
-              {searchResults.length > 0 && (
-                <div className="space-y-2 mt-3 border-t border-white/10 pt-3">
-                  {searchResults.map(user => (
-                    <div key={user.id} className="bg-slate-800/30 border border-white/10 rounded-lg p-3 flex items-center justify-between">
-                      <div>
-                        <p className="font-semibold">{user.name}</p>
-                        <p className="text-sm text-gray-400">@{user.username}</p>
-                      </div>
-                      <button onClick={() => sendFriendRequest(user.id)}
-                        className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2">
-                        <UserPlus className="w-4 h-4" />
-                        Add
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
             {(pendingFriends.incoming?.length > 0 || pendingFriends.outgoing?.length > 0) && (
               <div className="space-y-3">
                 <h3 className="text-lg font-bold text-gray-300">Pending Requests</h3>
@@ -1124,12 +1244,17 @@ const deleteFriend = async (friendId) => {
                 <div className="glassmorphism rounded-2xl p-8 text-center border">
                   <Users className="w-12 h-12 mx-auto mb-3 text-gray-600" />
                   <p className="text-gray-400">No friends yet</p>
-                  <p className="text-gray-500 text-sm mt-2">Search for users above to send friend requests</p>
+                  <p className="text-gray-500 text-sm mt-2">Add friends to start tracking expenses</p>
                 </div>
               ) : (
                 friends.filter(f => f.username.toLowerCase().includes(friendSearchQuery.toLowerCase()) || 
                                      f.name.toLowerCase().includes(friendSearchQuery.toLowerCase())).map(friend => {
                   const balance = calculateNetBalance(friend.id);
+                  const hasPending = tabs.some(t => 
+                    t.status === 'pending_settlement' &&
+                    ((t.from_user_id === currentUser.id && t.to_user_id === friend.id) ||
+                     (t.from_user_id === friend.id && t.to_user_id === currentUser.id))
+                  );
                   return (
                     <div key={friend.id} onClick={() => { setSelectedFriend(friend); setView('friendDetail'); }}
                       className="glassmorphism rounded-xl p-4 cursor-pointer transition-all border tab-card hover:border-emerald-500/30">
@@ -1141,6 +1266,9 @@ const deleteFriend = async (friendId) => {
                           <div>
                             <p className="font-semibold">{friend.name}</p>
                             <p className="text-sm text-gray-400">@{friend.username}</p>
+                            {hasPending && (
+                              <p className="text-xs text-yellow-400 mt-1">⏳ Pending Approval</p>
+                            )}
                           </div>
                         </div>
                         <div className="text-right">
@@ -1188,16 +1316,25 @@ const deleteFriend = async (friendId) => {
 
               {(() => {
                 const balance = calculateNetBalance(selectedFriend.id);
-                const activeTabs = getFriendTabs(selectedFriend.id, false);
+                const hasPending = tabs.some(t => 
+                  t.status === 'pending_settlement' &&
+                  ((t.from_user_id === currentUser.id && t.to_user_id === selectedFriend.id) ||
+                   (t.from_user_id === selectedFriend.id && t.to_user_id === currentUser.id))
+                );
                 return (
                   <div>
                     {Math.abs(balance) > 0.01 ? (
-                      <div className={`rounded-xl p-4 border mb-4 ${balance > 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
-                        <p className="text-sm text-gray-400 mb-1">Net balance</p>
-                        <p className={`text-3xl font-bold font-mono ${balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                          ${Math.abs(balance).toFixed(2)}
-                        </p>
-                        <p className="text-sm text-gray-400 mt-1">{balance > 0 ? `${selectedFriend.name} owes you` : `You owe ${selectedFriend.name}`}</p>
+                      <div>
+                        <div className={`rounded-xl p-4 border mb-4 ${balance > 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                          <p className="text-sm text-gray-400 mb-1">Net balance</p>
+                          <p className={`text-3xl font-bold font-mono ${balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            ${Math.abs(balance).toFixed(2)}
+                          </p>
+                          <p className="text-sm text-gray-400 mt-1">{balance > 0 ? `${selectedFriend.name} owes you` : `You owe ${selectedFriend.name}`}</p>
+                          {hasPending && (
+                            <p className="text-xs text-yellow-400 mt-2">⏳ Settlement pending approval</p>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <div className="bg-slate-800/30 rounded-xl p-4 border border-white/10 text-center mb-4">
@@ -1209,9 +1346,9 @@ const deleteFriend = async (friendId) => {
                       <button onClick={() => { setTabForm({ ...tabForm, friendId: selectedFriend.id }); setView('addTab'); }}
                         className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
                         <Plus className="w-4 h-4" />
-                        Start Tab
+                        {hasActiveTabWithFriend(selectedFriend.id) ? 'Add to Tab' : 'Start Tab'}
                       </button>
-                      {Math.abs(balance) > 0.01 && (
+                      {Math.abs(balance) > 0.01 && !hasPending && (
                         <button onClick={() => handleSettleClick(selectedFriend)}
                           className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
                           <Check className="w-4 h-4" />
@@ -1232,10 +1369,10 @@ const deleteFriend = async (friendId) => {
             </div>
 
             <div className="space-y-3">
-              <h3 className="text-lg font-bold text-gray-300">Active Tabs</h3>
+              <h3 className="text-lg font-bold text-gray-300">Active Expenses</h3>
               {getFriendTabs(selectedFriend.id, false).length === 0 ? (
                 <div className="glassmorphism rounded-2xl p-6 text-center border">
-                  <p className="text-gray-400">No active tabs</p>
+                  <p className="text-gray-400">No active expenses</p>
                 </div>
               ) : (
                 getFriendTabs(selectedFriend.id, false).map(tab => (
@@ -1251,18 +1388,52 @@ const deleteFriend = async (friendId) => {
                           )}
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className={`text-2xl font-bold font-mono ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
-                          ${tab.amount}
-                        </p>
-                        <p className="text-xs text-gray-500">{tab.type === 'owed' ? 'they owe' : 'you owe'}</p>
+                      <div className="text-right flex items-start gap-2">
+                        <div>
+                          <p className={`text-2xl font-bold font-mono ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                            ${tab.amount}
+                          </p>
+                          <p className="text-xs text-gray-500">{tab.type === 'owed' ? 'they owe' : 'you owe'}</p>
+                        </div>
+                        {tab.from_user_id === currentUser.id && tab.status !== 'pending_settlement' && (
+                          <div className="flex gap-1">
+                            <button onClick={(e) => { e.stopPropagation(); setEditingExpense(tab.id); setEditExpenseForm({ amount: tab.amount, description: tab.description, date: tab.date, reason: '' }); }}
+                              className="text-gray-400 hover:text-white p-1">
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); deleteTab(tab.id); }}
+                              className="text-red-400/70 hover:text-red-400 p-1">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
+                    {editingExpense === tab.id && (
+                      <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                        <input type="number" step="0.01" value={editExpenseForm.amount} onChange={(e) => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })}
+                          className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" placeholder="Amount" />
+                        <input type="text" value={editExpenseForm.description} onChange={(e) => setEditExpenseForm({ ...editExpenseForm, description: e.target.value })}
+                          className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" placeholder="Description" />
+                        <input type="date" value={editExpenseForm.date} onChange={(e) => setEditExpenseForm({ ...editExpenseForm, date: e.target.value })}
+                          className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" />
+                        <div className="flex gap-2">
+                          <button onClick={() => { updateTab(tab.id); }}
+                            className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2 rounded-lg text-sm">
+                            Save
+                          </button>
+                          <button onClick={() => setEditingExpense(null)}
+                            className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {tab.status === 'pending_settlement' && tab.type === 'owed' && (
                       <div className="flex gap-2 mt-3">
                         <button onClick={() => approveSettlement(selectedFriend.id)}
                           className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2 rounded-lg text-sm">
-                          Approve
+                          Approve Settlement
                         </button>
                         <button onClick={() => denySettlement(selectedFriend.id)}
                           className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg text-sm">
@@ -1278,18 +1449,31 @@ const deleteFriend = async (friendId) => {
             {getSettledTabs()[selectedFriend.id] && (
               <div className="space-y-3">
                 <button onClick={() => toggleSettledExpansion(selectedFriend.id)}
-                  className="w-full flex items-center justify-between text-left text-gray-400 hover:text-white">
-                  <h3 className="text-lg font-bold">Settled Tabs ({getSettledTabs()[selectedFriend.id].tabs.length})</h3>
-                  {expandedSettledTabs[selectedFriend.id] ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  className="w-full glassmorphism rounded-xl p-4 border flex items-center justify-between text-left hover:border-white/20 transition-all">
+                  <div>
+                    <h3 className="text-lg font-bold">Settled Tab</h3>
+                    <p className="text-sm text-gray-400">
+                      {getSettledTabs()[selectedFriend.id].earliestDate.toLocaleDateString()} - {getSettledTabs()[selectedFriend.id].latestDate.toLocaleDateString()}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Settled on {new Date(getSettledTabs()[selectedFriend.id].settledDate).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div className="text-right flex items-center gap-3">
+                    <div>
+                      <p className="text-gray-400 text-sm">{getSettledTabs()[selectedFriend.id].count} expense{getSettledTabs()[selectedFriend.id].count !== 1 ? 's' : ''}</p>
+                    </div>
+                    {expandedSettledTabs[selectedFriend.id] ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+                  </div>
                 </button>
                 {expandedSettledTabs[selectedFriend.id] && (
-                  <div className="space-y-2">
+                  <div className="space-y-2 ml-4">
                     {getSettledTabs()[selectedFriend.id].tabs.map(tab => (
                       <div key={tab.id} className="glassmorphism rounded-lg p-3 border opacity-60">
                         <div className="flex justify-between items-start">
                           <div>
                             <p className="font-semibold">{tab.description || 'No description'}</p>
-                            <p className="text-xs text-gray-500">Settled {new Date(tab.settled_at).toLocaleDateString()}</p>
+                            <p className="text-xs text-gray-500">{new Date(tab.date).toLocaleDateString()}</p>
                           </div>
                           <p className={`font-mono font-bold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
                             ${tab.amount}
@@ -1307,7 +1491,7 @@ const deleteFriend = async (friendId) => {
           <div className="space-y-6">
             <button onClick={() => setView('home')} className="text-gray-400 hover:text-white flex items-center gap-2">← Back</button>
             <div className="glassmorphism rounded-2xl p-6 border">
-              <h2 className="text-2xl font-bold mb-6">New Tab</h2>
+              <h2 className="text-2xl font-bold mb-6">New Expense</h2>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Friend</label>
@@ -1352,7 +1536,183 @@ const deleteFriend = async (friendId) => {
                 </div>
                 <button onClick={addTab} disabled={!tabForm.amount || !tabForm.friendId}
                   className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl mt-6">
-                  Create Tab
+                  Create Expense
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {view === 'groups' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">Groups</h2>
+              <button onClick={() => setView('addGroup')} className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 px-4 py-2 rounded-lg flex items-center gap-2 transition-all border border-emerald-500/30">
+                <Plus className="w-4 h-4" />
+                New Group
+              </button>
+            </div>
+            {groups.length === 0 ? (
+              <div className="glassmorphism rounded-2xl p-8 text-center border">
+                <Users className="w-12 h-12 mx-auto mb-3 text-gray-600" />
+                <p className="text-gray-400">No groups yet</p>
+                <p className="text-gray-500 text-sm mt-2">Create a group to split expenses</p>
+              </div>
+            ) : (
+              groups.map(group => (
+                <div key={group.id} onClick={() => { setSelectedGroup(group); setView('groupDetail'); }}
+                  className="glassmorphism rounded-xl p-4 cursor-pointer transition-all border tab-card hover:border-emerald-500/30">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-slate-700/50 p-3 rounded-full">
+                        <Users className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="font-semibold">{group.name}</p>
+                        <p className="text-sm text-gray-400">{group.members?.length || 0} members</p>
+                      </div>
+                    </div>
+                    <ArrowRight className="w-5 h-5 text-gray-400" />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {view === 'addGroup' && (
+          <div className="space-y-6">
+            <button onClick={() => setView('groups')} className="text-gray-400 hover:text-white flex items-center gap-2">← Back</button>
+            <div className="glassmorphism rounded-2xl p-6 border">
+              <h2 className="text-2xl font-bold mb-6">Create Group</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Group Name</label>
+                  <input type="text" value={groupForm.name} onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })}
+                    placeholder="Trip to Hawaii" className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Add Friends</label>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {friends.map(friend => (
+                      <button key={friend.id} onClick={() => toggleFriendInGroup(friend.id)}
+                        className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${groupForm.selectedFriends.includes(friend.id) ? 'bg-emerald-500/20 border border-emerald-500/50' : 'bg-slate-800/30 border border-white/10'}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="bg-slate-700/50 p-2 rounded-full">
+                            <User className="w-4 h-4" />
+                          </div>
+                          <div className="text-left">
+                            <p className="font-semibold text-sm">{friend.name}</p>
+                            <p className="text-xs text-gray-400">@{friend.username}</p>
+                          </div>
+                        </div>
+                        {groupForm.selectedFriends.includes(friend.id) && <Check className="w-5 h-5 text-emerald-400" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={addGroup} disabled={!groupForm.name.trim() || groupForm.selectedFriends.length === 0}
+                  className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl mt-6">
+                  Create Group
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {view === 'groupDetail' && selectedGroup && (
+          <div className="space-y-6">
+            <button onClick={() => setView('groups')} className="text-gray-400 hover:text-white flex items-center gap-2">← Back to Groups</button>
+            <div className="glassmorphism rounded-2xl p-6 border">
+              <h2 className="text-2xl font-bold mb-4">{selectedGroup.name}</h2>
+              <div className="flex flex-wrap gap-2">
+                {selectedGroup.members?.map(member => (
+                  <div key={member.id} className="bg-slate-800/50 rounded-lg px-3 py-2 text-sm flex items-center gap-2">
+                    <User className="w-4 h-4 text-gray-400" />
+                    <span>{member.name}</span>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setView('addGroupExpense')} className="w-full mt-4 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+                <Plus className="w-4 h-4" />
+                Add Expense
+              </button>
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-lg font-bold text-gray-300">Group Expenses</h3>
+              {groupExpenses.filter(e => e.group_id === selectedGroup.id).length === 0 ? (
+                <div className="glassmorphism rounded-2xl p-6 text-center border">
+                  <p className="text-gray-400">No expenses yet</p>
+                </div>
+              ) : (
+                groupExpenses.filter(e => e.group_id === selectedGroup.id).map(expense => (
+                  <div key={expense.id} className="glassmorphism rounded-xl p-4 border">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="font-semibold text-lg">{expense.description}</p>
+                        <p className="text-sm text-gray-400">{new Date(expense.date).toLocaleDateString()}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-2xl font-bold font-mono text-emerald-400">${parseFloat(expense.amount).toFixed(2)}</p>
+                        <p className="text-xs text-gray-500">paid by {selectedGroup.members?.find(m => m.id === expense.paid_by_user_id)?.name}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {view === 'addGroupExpense' && selectedGroup && (
+          <div className="space-y-6">
+            <button onClick={() => setView('groupDetail')} className="text-gray-400 hover:text-white flex items-center gap-2">← Back</button>
+            <div className="glassmorphism rounded-2xl p-6 border">
+              <h2 className="text-2xl font-bold mb-6">Add Group Expense</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Amount</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-xl">$</span>
+                    <input type="number" step="0.01" value={groupExpenseForm.amount} onChange={(e) => setGroupExpenseForm({ ...groupExpenseForm, amount: e.target.value })}
+                      placeholder="0.00" className="w-full bg-slate-800/50 border border-white/10 rounded-xl pl-8 pr-4 py-3 text-white text-xl font-mono" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Description</label>
+                  <input type="text" value={groupExpenseForm.description} onChange={(e) => setGroupExpenseForm({ ...groupExpenseForm, description: e.target.value })}
+                    placeholder="What's this for?" className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Paid By</label>
+                  <select value={groupExpenseForm.paidBy || ''} onChange={(e) => setGroupExpenseForm({ ...groupExpenseForm, paidBy: e.target.value })}
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white">
+                    <option value="">Select who paid</option>
+                    {selectedGroup.members?.map(member => (
+                      <option key={member.id} value={member.id}>{member.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Split With</label>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {selectedGroup.members?.map(member => (
+                      <button key={member.id} onClick={() => toggleMemberInExpense(member.id)}
+                        className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${groupExpenseForm.splitWith.includes(member.id) ? 'bg-emerald-500/20 border border-emerald-500/50' : 'bg-slate-800/30 border border-white/10'}`}>
+                        <span className="text-sm">{member.name}</span>
+                        {groupExpenseForm.splitWith.includes(member.id) && <Check className="w-5 h-5 text-emerald-400" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Date</label>
+                  <input type="date" value={groupExpenseForm.date} onChange={(e) => setGroupExpenseForm({ ...groupExpenseForm, date: e.target.value })}
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
+                </div>
+                <button onClick={addGroupExpense} disabled={!groupExpenseForm.amount || !groupExpenseForm.paidBy || groupExpenseForm.splitWith.length === 0}
+                  className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl mt-6">
+                  Add Expense
                 </button>
               </div>
             </div>
@@ -1368,32 +1728,44 @@ const deleteFriend = async (friendId) => {
                 <p className="text-gray-400">No settled tabs yet</p>
               </div>
             ) : (
-              Object.values(getSettledTabs()).map(({ friend, tabs: settledTabs }) => (
-                <div key={friend.id} className="glassmorphism rounded-2xl p-6 border">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="bg-slate-700/50 p-3 rounded-full">
-                      <User className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-bold">{friend.name}</h3>
-                      <p className="text-sm text-gray-400">@{friend.username} • {settledTabs.length} settled</p>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    {settledTabs.map(tab => (
-                      <div key={tab.id} className="bg-slate-800/30 rounded-lg p-3 border border-white/10 opacity-60">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-semibold">{tab.description || 'No description'}</p>
-                            <p className="text-xs text-gray-500">Settled {new Date(tab.settled_at).toLocaleDateString()}</p>
-                          </div>
-                          <p className={`font-mono font-bold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
-                            ${tab.amount}
-                          </p>
-                        </div>
+              Object.values(getSettledTabs()).map(({ friend, tabs: settledTabs, totalAmount, count, earliestDate, latestDate, settledDate }) => (
+                <div key={friend.id} className="space-y-3">
+                  <button onClick={() => toggleSettledExpansion(friend.id)}
+                    className="w-full glassmorphism rounded-xl p-4 border flex items-center justify-between text-left hover:border-white/20 transition-all">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-slate-700/50 p-3 rounded-full">
+                        <User className="w-6 h-6" />
                       </div>
-                    ))}
-                  </div>
+                      <div>
+                        <h3 className="text-xl font-bold">{friend.name}</h3>
+                        <p className="text-sm text-gray-400">{earliestDate.toLocaleDateString()} - {latestDate.toLocaleDateString()}</p>
+                        <p className="text-xs text-gray-500">Settled on {new Date(settledDate).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                    <div className="text-right flex items-center gap-3">
+                      <div>
+                        <p className="text-gray-400 text-sm">{count} expense{count !== 1 ? 's' : ''}</p>
+                      </div>
+                      {expandedSettledTabs[friend.id] ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+                    </div>
+                  </button>
+                  {expandedSettledTabs[friend.id] && (
+                    <div className="space-y-2 ml-4">
+                      {settledTabs.map(tab => (
+                        <div key={tab.id} className="glassmorphism rounded-lg p-3 border opacity-60">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-semibold">{tab.description || 'No description'}</p>
+                              <p className="text-xs text-gray-500">{new Date(tab.date).toLocaleDateString()}</p>
+                            </div>
+                            <p className={`font-mono font-bold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                              ${tab.amount}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -1477,7 +1849,7 @@ const deleteFriend = async (friendId) => {
                   <span className="font-semibold">{settleModalData.friend.name}</span>
                 </div>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-gray-400">Total Tabs:</span>
+                  <span className="text-gray-400">Total Expenses:</span>
                   <span className="font-semibold">{settleModalData.tabCount}</span>
                 </div>
                 <div className="flex items-center justify-between">
