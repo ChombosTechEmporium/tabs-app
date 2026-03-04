@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, User, DollarSign, Bell, TrendingUp, TrendingDown, Calendar, Edit2, Check, X, UserPlus, ArrowRight, Users, Trash2, LogOut, Search, Camera, Upload, AlertCircle, History as HistoryIcon, Send, Eye, EyeOff, Home as HomeIcon, UserCheck, UserX, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, User, DollarSign, Bell, TrendingUp, TrendingDown, Calendar, Edit2, Check, X, UserPlus, ArrowRight, Users, Trash2, LogOut, Search, Camera, Upload, AlertCircle, History as HistoryIcon, Send, Eye, EyeOff, Home as HomeIcon, UserCheck, UserX, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = 'https://lntmwatlmhcpfkicghcq.supabase.co';
@@ -15,18 +15,21 @@ export default function TabsApp() {
   const [pendingFriends, setPendingFriends] = useState({ incoming: [], outgoing: [] });
   const [tabs, setTabs] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [groupMembers, setGroupMembers] = useState({});
   const [groupExpenses, setGroupExpenses] = useState([]);
   const [notifications, setNotifications] = useState([]);
   
   const [view, setView] = useState('home');
   const [selectedFriend, setSelectedFriend] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState(null);
+  const [selectedSession, setSelectedSession] = useState(null);
   const [showNotificationPanel, setShowNotificationPanel] = useState(false);
   const [friendSearchQuery, setFriendSearchQuery] = useState('');
   const [error, setError] = useState('');
   const [expandedSettledTabs, setExpandedSettledTabs] = useState({});
   const [showBreakdown, setShowBreakdown] = useState(null);
   const [editingExpense, setEditingExpense] = useState(null);
+  const [suggestingEdit, setSuggestingEdit] = useState(null);
   
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [settleModalData, setSettleModalData] = useState(null);
@@ -174,7 +177,8 @@ export default function TabsApp() {
     const { data, error } = await supabase
       .from('tabs')
       .select('*')
-      .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`);
+      .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
+      .order('date', { ascending: false });
     
     if (!error && data) {
       setTabs(data);
@@ -184,15 +188,36 @@ export default function TabsApp() {
   const loadGroups = async (userId) => {
     const { data, error } = await supabase
       .from('group_members')
-      .select('group:groups(*), members:group_members(user:users(id, username, name, profile_picture_url))')
+      .select('group_id')
       .eq('user_id', userId);
     
     if (!error && data) {
-      const groupsWithMembers = data.map(item => ({
-        ...item.group,
-        members: item.members?.map(m => m.user) || []
-      }));
-      setGroups(groupsWithMembers);
+      const groupIds = data.map(gm => gm.group_id);
+      
+      if (groupIds.length > 0) {
+        const { data: groupsData } = await supabase
+          .from('groups')
+          .select('*')
+          .in('id', groupIds);
+        
+        if (groupsData) {
+          setGroups(groupsData);
+          
+          for (const group of groupsData) {
+            const { data: members } = await supabase
+              .from('group_members')
+              .select('user:users(id, username, name, profile_picture_url)')
+              .eq('group_id', group.id);
+            
+            if (members) {
+              setGroupMembers(prev => ({
+                ...prev,
+                [group.id]: members.map(m => m.user)
+              }));
+            }
+          }
+        }
+      }
     }
   };
 
@@ -385,6 +410,20 @@ const handleSignup = async (e) => {
     }
     
     try {
+      const activeTabs = tabs.filter(t => 
+        (t.status === 'active' || t.status === 'pending_settlement') &&
+        ((t.from_user_id === currentUser.id && t.to_user_id === tabForm.friendId) ||
+         (t.from_user_id === tabForm.friendId && t.to_user_id === currentUser.id))
+      );
+      
+      let sessionId;
+      if (activeTabs.length > 0 && activeTabs[0].tab_session_id) {
+        sessionId = activeTabs[0].tab_session_id;
+      } else {
+        const { data: newSession } = await supabase.rpc('generate_tab_session');
+        sessionId = newSession;
+      }
+      
       const { error } = await supabase
         .from('tabs')
         .insert([{
@@ -393,7 +432,8 @@ const handleSignup = async (e) => {
           amount: parseFloat(tabForm.amount),
           description: tabForm.description,
           date: tabForm.date,
-          status: 'active'
+          status: 'active',
+          tab_session_id: sessionId
         }]);
       
       if (error) throw error;
@@ -411,21 +451,50 @@ const handleSignup = async (e) => {
     }
   };
 
-  const updateTab = async (tabId) => {
+  const updateTab = async (tabId, isCreator) => {
     try {
-      const { error } = await supabase
-        .from('tabs')
-        .update({
-          amount: parseFloat(editExpenseForm.amount),
-          description: editExpenseForm.description,
-          date: editExpenseForm.date
-        })
-        .eq('id', tabId);
-      
-      if (error) throw error;
-      await loadTabs(currentUser.id);
-      setEditingExpense(null);
-      alert('Expense updated!');
+      if (isCreator) {
+        const { error } = await supabase
+          .from('tabs')
+          .update({
+            amount: parseFloat(editExpenseForm.amount),
+            description: editExpenseForm.description,
+            date: editExpenseForm.date
+          })
+          .eq('id', tabId);
+        
+        if (error) throw error;
+        await loadTabs(currentUser.id);
+        setEditingExpense(null);
+        alert('Expense updated!');
+      } else {
+        const tab = tabs.find(t => t.id === tabId);
+        if (!tab) return;
+        
+        await supabase.from('tab_edit_suggestions').insert([{
+          tab_id: tabId,
+          suggested_by_user_id: currentUser.id,
+          suggested_amount: parseFloat(editExpenseForm.amount),
+          suggested_description: editExpenseForm.description,
+          suggested_date: editExpenseForm.date,
+          reason: editExpenseForm.reason,
+          status: 'pending'
+        }]);
+        
+        const otherUserId = tab.from_user_id === currentUser.id ? tab.to_user_id : tab.from_user_id;
+        
+        await supabase.from('notifications').insert([{
+          user_id: otherUserId,
+          type: 'tab_edit_suggestion',
+          title: 'Edit Suggestion',
+          message: `${currentUser.username} suggested an edit to "${tab.description || 'an expense'}"`,
+          metadata: { tab_id: tabId }
+        }]);
+        
+        setSuggestingEdit(null);
+        setEditExpenseForm({ amount: '', description: '', date: '', reason: '' });
+        alert('Edit suggestion sent!');
+      }
     } catch (err) {
       setError('Failed to update expense');
     }
@@ -441,31 +510,45 @@ const handleSignup = async (e) => {
     }
   };
 
-  const handleSettleClick = async (friend) => {
-    const balance = calculateNetBalance(friend.id);
-    const unsettledTabs = getFriendTabs(friend.id, false);
+  const handleSettleClick = async (friend, sessionId) => {
+    const sessionTabs = tabs.filter(t => 
+      t.tab_session_id === sessionId &&
+      (t.status === 'active' || t.status === 'pending_settlement')
+    );
+    
+    const balance = sessionTabs.reduce((sum, t) => {
+      if (t.from_user_id === currentUser.id) {
+        return sum - parseFloat(t.amount);
+      } else {
+        return sum + parseFloat(t.amount);
+      }
+    }, 0);
     
     setSettleModalData({
       friend,
+      sessionId,
       balance,
-      tabCount: unsettledTabs.length,
+      tabCount: sessionTabs.length,
       isOwed: balance > 0,
-      tabs: unsettledTabs
+      tabs: sessionTabs
     });
     setShowSettleModal(true);
   };
 
   const confirmSettle = async () => {
-    const { friend, isOwed, tabs: friendTabs } = settleModalData;
+    const { friend, sessionId, isOwed } = settleModalData;
     
     try {
       if (isOwed) {
-        for (const tab of friendTabs) {
-          await supabase.from('tabs').update({ 
+        await supabase
+          .from('tabs')
+          .update({ 
             status: 'settled',
             settled_at: new Date().toISOString()
-          }).eq('id', tab.id);
-        }
+          })
+          .eq('tab_session_id', sessionId)
+          .in('status', ['active', 'pending_settlement']);
+        
         await supabase.from('notifications').insert([{
           user_id: friend.id,
           type: 'settlement_cleared',
@@ -473,16 +556,21 @@ const handleSignup = async (e) => {
           message: `${currentUser.username} cleared your debt. All tabs are settled!`,
           metadata: { friend_id: currentUser.id }
         }]);
+        
         alert(`All tabs with ${friend.username} have been settled!`);
       } else {
-        for (const tab of friendTabs) {
-          await supabase.from('tabs').update({ 
+        await supabase
+          .from('tabs')
+          .update({ 
             status: 'pending_settlement',
             settlement_requested_at: new Date().toISOString()
-          }).eq('id', tab.id);
-        }
+          })
+          .eq('tab_session_id', sessionId)
+          .eq('status', 'active');
+        
         alert(`Settlement request sent to ${friend.username}!`);
       }
+      
       await loadTabs(currentUser.id);
       setShowSettleModal(false);
       setSettleModalData(null);
@@ -491,19 +579,17 @@ const handleSignup = async (e) => {
     }
   };
 
-  const approveSettlement = async (friendId) => {
+  const approveSettlement = async (sessionId) => {
     try {
-      const pendingTabs = tabs.filter(t => 
-        t.status === 'pending_settlement' &&
-        ((t.from_user_id === friendId && t.to_user_id === currentUser.id))
-      );
-      
-      for (const tab of pendingTabs) {
-        await supabase.from('tabs').update({ 
+      await supabase
+        .from('tabs')
+        .update({ 
           status: 'settled',
           settled_at: new Date().toISOString()
-        }).eq('id', tab.id);
-      }
+        })
+        .eq('tab_session_id', sessionId)
+        .eq('status', 'pending_settlement');
+      
       await loadTabs(currentUser.id);
       alert('Settlement approved!');
     } catch (err) {
@@ -511,19 +597,17 @@ const handleSignup = async (e) => {
     }
   };
 
-  const denySettlement = async (friendId) => {
+  const denySettlement = async (sessionId) => {
     try {
-      const pendingTabs = tabs.filter(t => 
-        t.status === 'pending_settlement' &&
-        ((t.from_user_id === friendId && t.to_user_id === currentUser.id))
-      );
-      
-      for (const tab of pendingTabs) {
-        await supabase.from('tabs').update({ 
+      await supabase
+        .from('tabs')
+        .update({ 
           status: 'active',
           settlement_requested_at: null
-        }).eq('id', tab.id);
-      }
+        })
+        .eq('tab_session_id', sessionId)
+        .eq('status', 'pending_settlement');
+      
       await loadTabs(currentUser.id);
       alert('Settlement denied');
     } catch (err) {
@@ -586,11 +670,16 @@ const handleSignup = async (e) => {
         group_id: newGroup.id,
         user_id: userId
       }));
-      await supabase.from('group_members').insert(members);
+      
+      const { error: membersError } = await supabase.from('group_members').insert(members);
+      
+      if (membersError) throw membersError;
+      
       await loadGroups(currentUser.id);
       setGroupForm({ name: '', selectedFriends: [] });
       setView('groups');
     } catch (err) {
+      console.error('Group creation error:', err);
       setError(err.message);
     }
   };
@@ -623,6 +712,7 @@ const handleSignup = async (e) => {
         amount: perPerson,
         status: 'active'
       }));
+      
       await supabase.from('group_expense_splits').insert(splits);
       await loadGroupExpenses(currentUser.id);
       setGroupExpenseForm({
@@ -660,11 +750,11 @@ const handleSignup = async (e) => {
     
     try {
       const fileExt = file.name.split('.').pop();
-      const fileName = `${currentUser.id}/profile.${fileExt}`;
+      const fileName = `${currentUser.id}/${Date.now()}.${fileExt}`;
       
       const { error: uploadError } = await supabase.storage
         .from('profile-pictures')
-        .upload(fileName, file, { upsert: true });
+        .upload(fileName, file);
       
       if (uploadError) throw uploadError;
       
@@ -678,23 +768,88 @@ const handleSignup = async (e) => {
         .eq('id', currentUser.id);
       
       if (updateError) throw updateError;
+      
       await loadUserData(currentUser.id);
       setProfilePictureFile(null);
+      alert('Profile picture updated!');
     } catch (err) {
-      setError('Failed to upload profile picture');
+      setError('Failed to upload profile picture: ' + err.message);
+      console.error(err);
     } finally {
       setUploadingPicture(false);
     }
   };
-const calculateNetBalance = (friendId) => {
+const getTabSessionsByFriend = (friendId) => {
+    if (!currentUser) return { active: [], pending: [], settled: [] };
+    
+    const friendTabs = tabs.filter(t => 
+      (t.from_user_id === currentUser.id && t.to_user_id === friendId) ||
+      (t.from_user_id === friendId && t.to_user_id === currentUser.id)
+    );
+    
+    const sessionMap = {};
+    
+    friendTabs.forEach(tab => {
+      const sessionId = tab.tab_session_id;
+      if (!sessionMap[sessionId]) {
+        sessionMap[sessionId] = [];
+      }
+      sessionMap[sessionId].push(tab);
+    });
+    
+    const sessions = Object.entries(sessionMap).map(([sessionId, sessionTabs]) => {
+      const sorted = sessionTabs.sort((a, b) => new Date(a.date) - new Date(b.date));
+      const status = sessionTabs[0].status;
+      
+      const balance = sessionTabs.reduce((sum, t) => {
+        if (t.from_user_id === currentUser.id) {
+          return sum - parseFloat(t.amount);
+        } else {
+          return sum + parseFloat(t.amount);
+        }
+      }, 0);
+      
+      const totalAmount = sessionTabs.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+      const iOwe = sessionTabs.filter(t => t.from_user_id === currentUser.id).reduce((sum, t) => sum + parseFloat(t.amount), 0);
+      const theyOwe = sessionTabs.filter(t => t.from_user_id === friendId).reduce((sum, t) => sum + parseFloat(t.amount), 0);
+      
+      return {
+        sessionId,
+        tabs: sorted.map(t => ({
+          ...t,
+          type: t.from_user_id === currentUser.id ? 'owe' : 'owed',
+          amount: parseFloat(t.amount).toFixed(2)
+        })),
+        status,
+        balance,
+        totalAmount,
+        iOwe,
+        theyOwe,
+        count: sessionTabs.length,
+        earliestDate: new Date(sorted[0].date),
+        latestDate: new Date(sorted[sorted.length - 1].date),
+        settledDate: status === 'settled' ? sorted[0].settled_at : null
+      };
+    });
+    
+    return {
+      active: sessions.filter(s => s.status === 'active'),
+      pending: sessions.filter(s => s.status === 'pending_settlement'),
+      settled: sessions.filter(s => s.status === 'settled').sort((a, b) => new Date(b.settledDate) - new Date(a.settledDate))
+    };
+  };
+
+  const calculateNetBalance = (friendId, excludePending = false) => {
     if (!currentUser) return 0;
     
-    const relevantTabs = tabs.filter(t => 
-      (t.status === 'active' || t.status === 'pending_settlement') && (
-        (t.from_user_id === currentUser.id && t.to_user_id === friendId) ||
-        (t.from_user_id === friendId && t.to_user_id === currentUser.id)
-      )
-    );
+    const relevantTabs = tabs.filter(t => {
+      const isBetweenUsers = (t.from_user_id === currentUser.id && t.to_user_id === friendId) ||
+                             (t.from_user_id === friendId && t.to_user_id === currentUser.id);
+      if (excludePending) {
+        return isBetweenUsers && t.status === 'active';
+      }
+      return isBetweenUsers && (t.status === 'active' || t.status === 'pending_settlement');
+    });
     
     const iOwe = relevantTabs.filter(t => t.from_user_id === currentUser.id)
       .reduce((sum, t) => sum + parseFloat(t.amount), 0);
@@ -704,99 +859,66 @@ const calculateNetBalance = (friendId) => {
     return theyOwe - iOwe;
   };
 
+  const getPendingBalance = (friendId) => {
+    if (!currentUser) return 0;
+    
+    const pendingTabs = tabs.filter(t => 
+      t.status === 'pending_settlement' &&
+      ((t.from_user_id === currentUser.id && t.to_user_id === friendId) ||
+       (t.from_user_id === friendId && t.to_user_id === currentUser.id))
+    );
+    
+    const iOwe = pendingTabs.filter(t => t.from_user_id === currentUser.id)
+      .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+    const theyOwe = pendingTabs.filter(t => t.from_user_id === friendId)
+      .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+    
+    return theyOwe - iOwe;
+  };
+
   const getAllBalances = () => {
     if (!currentUser) return [];
     return friends.map(friend => ({
       friend,
-      balance: calculateNetBalance(friend.id)
-    })).filter(b => Math.abs(b.balance) > 0.01);
-  };
-
-  const getFriendTabs = (friendId, includeSettled = false, onlySettled = false) => {
-    let filteredTabs = tabs.filter(t => {
-      const isBetweenUsers = (t.from_user_id === currentUser.id && t.to_user_id === friendId) ||
-                             (t.from_user_id === friendId && t.to_user_id === currentUser.id);
-      if (onlySettled) return isBetweenUsers && t.status === 'settled';
-      if (includeSettled) return isBetweenUsers;
-      return isBetweenUsers && t.status !== 'settled';
-    });
-    
-    return filteredTabs.map(t => ({
-      ...t,
-      type: t.from_user_id === currentUser.id ? 'owe' : 'owed',
-      amount: parseFloat(t.amount).toFixed(2)
-    })).sort((a, b) => new Date(b.date) - new Date(a.date));
+      balance: calculateNetBalance(friend.id, true),
+      pendingBalance: getPendingBalance(friend.id)
+    })).filter(b => Math.abs(b.balance) > 0.01 || Math.abs(b.pendingBalance) > 0.01);
   };
 
   const getMyActiveTabs = () => {
     if (!currentUser) return {};
     
-    const activeTabs = tabs.filter(t => t.status === 'active' || t.status === 'pending_settlement');
     const grouped = {};
     
     friends.forEach(friend => {
-      const friendTabs = activeTabs.filter(t =>
-        (t.from_user_id === currentUser.id && t.to_user_id === friend.id) ||
-        (t.from_user_id === friend.id && t.to_user_id === currentUser.id)
-      );
+      const sessions = getTabSessionsByFriend(friend.id);
+      const activeSessions = [...sessions.active, ...sessions.pending];
       
-      if (friendTabs.length > 0) {
-        const balance = calculateNetBalance(friend.id);
-        const hasPending = friendTabs.some(t => t.status === 'pending_settlement');
-        grouped[friend.id] = {
-          friend,
-          tabs: friendTabs.map(t => ({
-            ...t,
-            type: t.from_user_id === currentUser.id ? 'owe' : 'owed',
-            amount: parseFloat(t.amount).toFixed(2)
-          })).sort((a, b) => new Date(b.date) - new Date(a.date)),
-          balance,
-          hasPending
-        };
-      }
-    });
-    
-    return grouped;
-  };
-
-  const getSettledTabs = () => {
-    if (!currentUser) return {};
-    const settled = tabs.filter(t => t.status === 'settled');
-    const grouped = {};
-    
-    friends.forEach(friend => {
-      const friendSettled = settled.filter(t =>
-        (t.from_user_id === currentUser.id && t.to_user_id === friend.id) ||
-        (t.from_user_id === friend.id && t.to_user_id === currentUser.id)
-      );
-      
-      if (friendSettled.length > 0) {
-        const sortedTabs = friendSettled.sort((a, b) => new Date(b.settled_at) - new Date(a.settled_at));
-        const earliestDate = new Date(Math.min(...friendSettled.map(t => new Date(t.date))));
-        const latestDate = new Date(Math.max(...friendSettled.map(t => new Date(t.date))));
+      if (activeSessions.length > 0) {
+        const totalBalance = activeSessions.reduce((sum, s) => sum + s.balance, 0);
+        const hasPending = sessions.pending.length > 0;
+        const activeBalance = sessions.active.reduce((sum, s) => sum + s.balance, 0);
+        const pendingBalance = sessions.pending.reduce((sum, s) => sum + s.balance, 0);
         
         grouped[friend.id] = {
           friend,
-          tabs: sortedTabs.map(t => ({
-            ...t,
-            type: t.from_user_id === currentUser.id ? 'owe' : 'owed',
-            amount: parseFloat(t.amount).toFixed(2)
-          })),
-          totalAmount: friendSettled.reduce((sum, t) => sum + parseFloat(t.amount), 0),
-          count: friendSettled.length,
-          earliestDate,
-          latestDate,
-          settledDate: sortedTabs[0].settled_at
+          sessions: activeSessions,
+          balance: totalBalance,
+          activeBalance,
+          pendingBalance,
+          hasPending,
+          totalExpenses: activeSessions.reduce((sum, s) => sum + s.count, 0)
         };
       }
     });
+    
     return grouped;
   };
 
-  const toggleSettledExpansion = (friendId) => {
+  const toggleSettledExpansion = (key) => {
     setExpandedSettledTabs(prev => ({
       ...prev,
-      [friendId]: !prev[friendId]
+      [key]: !prev[key]
     }));
   };
 
@@ -1076,9 +1198,10 @@ if (!session || !currentUser) {
                 </button>
               </div>
               <div className="space-y-4">
-                {showBreakdown.balances.map(({ friend, balance }) => (
-                  <div key={friend.id} className="glassmorphism rounded-xl p-4 border">
-                    <div className="flex items-center justify-between mb-3">
+                {showBreakdown.balances.map(({ friend, balance, pendingBalance }) => (
+                  <div key={friend.id} onClick={() => { setSelectedFriend(friend); setView('friendDetail'); setShowBreakdown(null); }}
+                    className="glassmorphism rounded-xl p-4 border cursor-pointer hover:border-emerald-500/30 transition-all">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="bg-slate-700/50 p-3 rounded-full">
                           <User className="w-5 h-5" />
@@ -1088,19 +1211,16 @@ if (!session || !currentUser) {
                           <p className="text-sm text-gray-400">@{friend.username}</p>
                         </div>
                       </div>
-                      <p className={`text-xl font-bold font-mono ${showBreakdown.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
-                        ${Math.abs(balance).toFixed(2)}
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      {getFriendTabs(friend.id, false).map(tab => (
-                        <div key={tab.id} className="bg-slate-800/30 rounded-lg p-2 text-sm flex justify-between">
-                          <span className="text-gray-300">{tab.description || 'No description'}</span>
-                          <span className={`font-mono font-semibold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
-                            ${tab.amount}
-                          </span>
-                        </div>
-                      ))}
+                      <div className="text-right">
+                        <p className={`text-xl font-bold font-mono ${showBreakdown.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ${Math.abs(balance).toFixed(2)}
+                        </p>
+                        {Math.abs(pendingBalance) > 0.01 && (
+                          <p className="text-xs text-yellow-400 mt-1">
+                            +${Math.abs(pendingBalance).toFixed(2)} pending
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1109,7 +1229,60 @@ if (!session || !currentUser) {
           </div>
         )}
 
-        {view === 'home' && (
+        {showSettleModal && settleModalData && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="glassmorphism rounded-2xl p-6 max-w-md w-full border">
+              <h2 className="text-2xl font-bold mb-4">Settle Tab</h2>
+              <div className="bg-slate-800/50 rounded-lg p-4 mb-6 border border-white/10">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-gray-400">Friend:</span>
+                  <span className="font-semibold">{settleModalData.friend.name}</span>
+                </div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-gray-400">Total Expenses:</span>
+                  <span className="font-semibold">{settleModalData.tabCount}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400">Net Amount:</span>
+                  <span className={`text-2xl font-bold font-mono ${settleModalData.isOwed ? 'text-emerald-400' : 'text-red-400'}`}>
+                    ${Math.abs(settleModalData.balance).toFixed(2)}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-500 mt-2">
+                  {settleModalData.isOwed ? 'They owe you' : 'You owe them'}
+                </p>
+              </div>
+              {settleModalData.isOwed ? (
+                <div className="space-y-3">
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 text-sm">
+                    <AlertCircle className="inline w-4 h-4 mr-2 text-emerald-400" />
+                    You're clearing their debt. This will settle all tabs and notify them.
+                  </div>
+                  <button onClick={confirmSettle}
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl">
+                    Confirm Settlement
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-sm">
+                    <AlertCircle className="inline w-4 h-4 mr-2 text-yellow-400" />
+                    Settlement request will be sent to {settleModalData.friend.name} for approval.
+                  </div>
+                  <button onClick={confirmSettle}
+                    className="w-full bg-red-500 hover:bg-red-600 text-white font-semibold py-3 rounded-xl">
+                    Send Settlement Request
+                  </button>
+                </div>
+              )}
+              <button onClick={() => { setShowSettleModal(false); setSettleModalData(null); }}
+                className="w-full mt-3 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-xl">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+{view === 'home' && (
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <button onClick={() => {
@@ -1154,32 +1327,92 @@ if (!session || !currentUser) {
                   <p className="text-gray-500 text-sm mt-2">Create a tab to get started</p>
                 </div>
               ) : (
-                Object.values(getMyActiveTabs()).map(({ friend, tabs: friendTabs, balance, hasPending }) => (
+                Object.values(getMyActiveTabs()).map(({ friend, sessions, activeBalance, pendingBalance, hasPending, totalExpenses }) => (
                   <div key={friend.id} onClick={() => { setSelectedFriend(friend); setView('friendDetail'); }}
                     className="glassmorphism rounded-xl p-4 cursor-pointer transition-all border tab-card hover:border-emerald-500/30">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="bg-slate-700/50 p-3 rounded-full">
-                          <User className="w-5 h-5" />
+                          {friend.profile_picture_url ? (
+                            <img src={friend.profile_picture_url} alt={friend.name} className="w-5 h-5 rounded-full" />
+                          ) : (
+                            <User className="w-5 h-5" />
+                          )}
                         </div>
                         <div>
                           <p className="font-semibold">{friend.name}</p>
-                          <p className="text-sm text-gray-400">@{friend.username} • {friendTabs.length} expense{friendTabs.length !== 1 ? 's' : ''}</p>
+                          <p className="text-sm text-gray-400">@{friend.username} • {totalExpenses} expense{totalExpenses !== 1 ? 's' : ''}</p>
                           {hasPending && (
-                            <p className="text-xs text-yellow-400 mt-1">⏳ Pending Approval</p>
+                            <p className="text-xs text-yellow-400 mt-1">⏳ ${Math.abs(pendingBalance).toFixed(2)} Pending Approval</p>
                           )}
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className={`text-xl font-bold font-mono ${balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                          ${Math.abs(balance).toFixed(2)}
+                        <p className={`text-xl font-bold font-mono ${activeBalance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ${Math.abs(activeBalance).toFixed(2)}
                         </p>
-                        <p className="text-xs text-gray-500">{balance > 0 ? 'owes you' : 'you owe'}</p>
+                        <p className="text-xs text-gray-500">{activeBalance > 0 ? 'owes you' : 'you owe'}</p>
                       </div>
                     </div>
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        )}
+
+        {view === 'addTab' && (
+          <div className="space-y-6">
+            <button onClick={() => setView('home')} className="text-gray-400 hover:text-white flex items-center gap-2">← Back</button>
+            <div className="glassmorphism rounded-2xl p-6 border">
+              <h2 className="text-2xl font-bold mb-6">New Expense</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Friend</label>
+                  <select value={tabForm.friendId || ''} onChange={(e) => setTabForm({ ...tabForm, friendId: e.target.value })}
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white">
+                    <option value="">Select a friend</option>
+                    {friends.map(friend => (
+                      <option key={friend.id} value={friend.id}>{friend.name} (@{friend.username})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Amount</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-xl">$</span>
+                    <input type="number" step="0.01" value={tabForm.amount} onChange={(e) => setTabForm({ ...tabForm, amount: e.target.value })}
+                      placeholder="0.00" className="w-full bg-slate-800/50 border border-white/10 rounded-xl pl-8 pr-4 py-3 text-white text-xl font-mono" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Type</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={() => setTabForm({ ...tabForm, type: 'owe' })}
+                      className={`py-3 rounded-xl font-semibold transition-all border ${tabForm.type === 'owe' ? 'bg-red-500/20 border-red-500/50 text-red-400' : 'bg-slate-800/30 border-white/10 text-gray-400'}`}>
+                      I owe them
+                    </button>
+                    <button onClick={() => setTabForm({ ...tabForm, type: 'owed' })}
+                      className={`py-3 rounded-xl font-semibold transition-all border ${tabForm.type === 'owed' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border-white/10 text-gray-400'}`}>
+                      They owe me
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Description</label>
+                  <input type="text" value={tabForm.description} onChange={(e) => setTabForm({ ...tabForm, description: e.target.value })}
+                    placeholder="What's this for?" className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Date</label>
+                  <input type="date" value={tabForm.date} onChange={(e) => setTabForm({ ...tabForm, date: e.target.value })}
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
+                </div>
+                <button onClick={addTab} disabled={!tabForm.amount || !tabForm.friendId}
+                  className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl mt-6">
+                  Create Expense
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1244,17 +1477,14 @@ if (!session || !currentUser) {
                 <div className="glassmorphism rounded-2xl p-8 text-center border">
                   <Users className="w-12 h-12 mx-auto mb-3 text-gray-600" />
                   <p className="text-gray-400">No friends yet</p>
-                  <p className="text-gray-500 text-sm mt-2">Add friends to start tracking expenses</p>
                 </div>
               ) : (
                 friends.filter(f => f.username.toLowerCase().includes(friendSearchQuery.toLowerCase()) || 
                                      f.name.toLowerCase().includes(friendSearchQuery.toLowerCase())).map(friend => {
-                  const balance = calculateNetBalance(friend.id);
-                  const hasPending = tabs.some(t => 
-                    t.status === 'pending_settlement' &&
-                    ((t.from_user_id === currentUser.id && t.to_user_id === friend.id) ||
-                     (t.from_user_id === friend.id && t.to_user_id === currentUser.id))
-                  );
+                  const activeBalance = calculateNetBalance(friend.id, true);
+                  const pendingBalance = getPendingBalance(friend.id);
+                  const hasPending = Math.abs(pendingBalance) > 0.01;
+                  
                   return (
                     <div key={friend.id} onClick={() => { setSelectedFriend(friend); setView('friendDetail'); }}
                       className="glassmorphism rounded-xl p-4 cursor-pointer transition-all border tab-card hover:border-emerald-500/30">
@@ -1267,17 +1497,17 @@ if (!session || !currentUser) {
                             <p className="font-semibold">{friend.name}</p>
                             <p className="text-sm text-gray-400">@{friend.username}</p>
                             {hasPending && (
-                              <p className="text-xs text-yellow-400 mt-1">⏳ Pending Approval</p>
+                              <p className="text-xs text-yellow-400 mt-1">⏳ ${Math.abs(pendingBalance).toFixed(2)} Pending</p>
                             )}
                           </div>
                         </div>
                         <div className="text-right">
-                          {Math.abs(balance) > 0.01 ? (
+                          {Math.abs(activeBalance) > 0.01 ? (
                             <>
-                              <p className={`text-lg font-bold font-mono ${balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                ${Math.abs(balance).toFixed(2)}
+                              <p className={`text-lg font-bold font-mono ${activeBalance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                ${Math.abs(activeBalance).toFixed(2)}
                               </p>
-                              <p className="text-xs text-gray-500">{balance > 0 ? 'owes you' : 'you owe'}</p>
+                              <p className="text-xs text-gray-500">{activeBalance > 0 ? 'owes you' : 'you owe'}</p>
                             </>
                           ) : (
                             <p className="text-gray-500 text-sm">settled</p>
@@ -1314,236 +1544,215 @@ if (!session || !currentUser) {
                 </button>
               </div>
 
-              {(() => {
-                const balance = calculateNetBalance(selectedFriend.id);
-                const hasPending = tabs.some(t => 
-                  t.status === 'pending_settlement' &&
-                  ((t.from_user_id === currentUser.id && t.to_user_id === selectedFriend.id) ||
-                   (t.from_user_id === selectedFriend.id && t.to_user_id === currentUser.id))
-                );
-                return (
-                  <div>
-                    {Math.abs(balance) > 0.01 ? (
-                      <div>
-                        <div className={`rounded-xl p-4 border mb-4 ${balance > 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
-                          <p className="text-sm text-gray-400 mb-1">Net balance</p>
-                          <p className={`text-3xl font-bold font-mono ${balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            ${Math.abs(balance).toFixed(2)}
-                          </p>
-                          <p className="text-sm text-gray-400 mt-1">{balance > 0 ? `${selectedFriend.name} owes you` : `You owe ${selectedFriend.name}`}</p>
-                          {hasPending && (
-                            <p className="text-xs text-yellow-400 mt-2">⏳ Settlement pending approval</p>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="bg-slate-800/30 rounded-xl p-4 border border-white/10 text-center mb-4">
-                        <p className="text-emerald-400 font-semibold">✨ All settled up!</p>
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-2 gap-3 mb-4">
-                      <button onClick={() => { setTabForm({ ...tabForm, friendId: selectedFriend.id }); setView('addTab'); }}
-                        className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
-                        <Plus className="w-4 h-4" />
-                        {hasActiveTabWithFriend(selectedFriend.id) ? 'Add to Tab' : 'Start Tab'}
-                      </button>
-                      {Math.abs(balance) > 0.01 && !hasPending && (
-                        <button onClick={() => handleSettleClick(selectedFriend)}
-                          className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
-                          <Check className="w-4 h-4" />
-                          Settle Tab
-                        </button>
-                      )}
-                      {balance < -0.01 && (
-                        <button onClick={() => sendReminder(selectedFriend)}
-                          className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
-                          <Bell className="w-4 h-4" />
-                          Remind
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-lg font-bold text-gray-300">Active Expenses</h3>
-              {getFriendTabs(selectedFriend.id, false).length === 0 ? (
-                <div className="glassmorphism rounded-2xl p-6 text-center border">
-                  <p className="text-gray-400">No active expenses</p>
-                </div>
-              ) : (
-                getFriendTabs(selectedFriend.id, false).map(tab => (
-                  <div key={tab.id} className="glassmorphism rounded-xl p-4 border">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <p className="font-semibold text-lg">{tab.description || 'No description'}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <Calendar className="w-3 h-3 text-gray-500" />
-                          <span className="text-sm text-gray-400">{new Date(tab.date).toLocaleDateString()}</span>
-                          {tab.status === 'pending_settlement' && (
-                            <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">Pending Approval</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right flex items-start gap-2">
-                        <div>
-                          <p className={`text-2xl font-bold font-mono ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
-                            ${tab.amount}
-                          </p>
-                          <p className="text-xs text-gray-500">{tab.type === 'owed' ? 'they owe' : 'you owe'}</p>
-                        </div>
-                        {tab.from_user_id === currentUser.id && tab.status !== 'pending_settlement' && (
-                          <div className="flex gap-1">
-                            <button onClick={(e) => { e.stopPropagation(); setEditingExpense(tab.id); setEditExpenseForm({ amount: tab.amount, description: tab.description, date: tab.date, reason: '' }); }}
-                              className="text-gray-400 hover:text-white p-1">
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            <button onClick={(e) => { e.stopPropagation(); deleteTab(tab.id); }}
-                              className="text-red-400/70 hover:text-red-400 p-1">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    {editingExpense === tab.id && (
-                      <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
-                        <input type="number" step="0.01" value={editExpenseForm.amount} onChange={(e) => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })}
-                          className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" placeholder="Amount" />
-                        <input type="text" value={editExpenseForm.description} onChange={(e) => setEditExpenseForm({ ...editExpenseForm, description: e.target.value })}
-                          className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" placeholder="Description" />
-                        <input type="date" value={editExpenseForm.date} onChange={(e) => setEditExpenseForm({ ...editExpenseForm, date: e.target.value })}
-                          className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" />
-                        <div className="flex gap-2">
-                          <button onClick={() => { updateTab(tab.id); }}
-                            className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2 rounded-lg text-sm">
-                            Save
-                          </button>
-                          <button onClick={() => setEditingExpense(null)}
-                            className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm">
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    {tab.status === 'pending_settlement' && tab.type === 'owed' && (
-                      <div className="flex gap-2 mt-3">
-                        <button onClick={() => approveSettlement(selectedFriend.id)}
-                          className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2 rounded-lg text-sm">
-                          Approve Settlement
-                        </button>
-                        <button onClick={() => denySettlement(selectedFriend.id)}
-                          className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg text-sm">
-                          Deny
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
-            {getSettledTabs()[selectedFriend.id] && (
-              <div className="space-y-3">
-                <button onClick={() => toggleSettledExpansion(selectedFriend.id)}
-                  className="w-full glassmorphism rounded-xl p-4 border flex items-center justify-between text-left hover:border-white/20 transition-all">
-                  <div>
-                    <h3 className="text-lg font-bold">Settled Tab</h3>
-                    <p className="text-sm text-gray-400">
-                      {getSettledTabs()[selectedFriend.id].earliestDate.toLocaleDateString()} - {getSettledTabs()[selectedFriend.id].latestDate.toLocaleDateString()}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Settled on {new Date(getSettledTabs()[selectedFriend.id].settledDate).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="text-right flex items-center gap-3">
-                    <div>
-                      <p className="text-gray-400 text-sm">{getSettledTabs()[selectedFriend.id].count} expense{getSettledTabs()[selectedFriend.id].count !== 1 ? 's' : ''}</p>
-                    </div>
-                    {expandedSettledTabs[selectedFriend.id] ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
-                  </div>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <button onClick={() => { setTabForm({ ...tabForm, friendId: selectedFriend.id }); setView('addTab'); }}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+                  <Plus className="w-4 h-4" />
+                  {hasActiveTabWithFriend(selectedFriend.id) ? 'Add to Tab' : 'Start Tab'}
                 </button>
-                {expandedSettledTabs[selectedFriend.id] && (
-                  <div className="space-y-2 ml-4">
-                    {getSettledTabs()[selectedFriend.id].tabs.map(tab => (
-                      <div key={tab.id} className="glassmorphism rounded-lg p-3 border opacity-60">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-semibold">{tab.description || 'No description'}</p>
-                            <p className="text-xs text-gray-500">{new Date(tab.date).toLocaleDateString()}</p>
-                          </div>
-                          <p className={`font-mono font-bold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
-                            ${tab.amount}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-{view === 'addTab' && (
-          <div className="space-y-6">
-            <button onClick={() => setView('home')} className="text-gray-400 hover:text-white flex items-center gap-2">← Back</button>
-            <div className="glassmorphism rounded-2xl p-6 border">
-              <h2 className="text-2xl font-bold mb-6">New Expense</h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Friend</label>
-                  <select value={tabForm.friendId || ''} onChange={(e) => setTabForm({ ...tabForm, friendId: e.target.value })}
-                    className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white">
-                    <option value="">Select a friend</option>
-                    {friends.map(friend => (
-                      <option key={friend.id} value={friend.id}>{friend.name} (@{friend.username})</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Amount</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-xl">$</span>
-                    <input type="number" step="0.01" value={tabForm.amount} onChange={(e) => setTabForm({ ...tabForm, amount: e.target.value })}
-                      placeholder="0.00" className="w-full bg-slate-800/50 border border-white/10 rounded-xl pl-8 pr-4 py-3 text-white text-xl font-mono" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Type</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button onClick={() => setTabForm({ ...tabForm, type: 'owe' })}
-                      className={`py-3 rounded-xl font-semibold transition-all border ${tabForm.type === 'owe' ? 'bg-red-500/20 border-red-500/50 text-red-400' : 'bg-slate-800/30 border-white/10 text-gray-400'}`}>
-                      I owe them
-                    </button>
-                    <button onClick={() => setTabForm({ ...tabForm, type: 'owed' })}
-                      className={`py-3 rounded-xl font-semibold transition-all border ${tabForm.type === 'owed' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-slate-800/30 border-white/10 text-gray-400'}`}>
-                      They owe me
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Description</label>
-                  <input type="text" value={tabForm.description} onChange={(e) => setTabForm({ ...tabForm, description: e.target.value })}
-                    placeholder="What's this for?" className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Date</label>
-                  <input type="date" value={tabForm.date} onChange={(e) => setTabForm({ ...tabForm, date: e.target.value })}
-                    className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white" />
-                </div>
-                <button onClick={addTab} disabled={!tabForm.amount || !tabForm.friendId}
-                  className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl mt-6">
-                  Create Expense
+                <button onClick={() => sendReminder(selectedFriend)}
+                  className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+                  <Bell className="w-4 h-4" />
+                  Remind
                 </button>
               </div>
             </div>
+
+            {(() => {
+              const sessions = getTabSessionsByFriend(selectedFriend.id);
+              return (
+                <>
+                  {sessions.active.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-bold text-gray-300">Active Expenses</h3>
+                      {sessions.active.map(session => (
+                        <div key={session.sessionId} className="glassmorphism rounded-xl p-4 border">
+                          <div className="flex items-center justify-between mb-3">
+                            <div>
+                              <p className="text-sm text-gray-400">{session.count} expense{session.count !== 1 ? 's' : ''}</p>
+                              <p className="text-xs text-gray-500">
+                                {session.earliestDate.toLocaleDateString()} - {session.latestDate.toLocaleDateString()}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className={`text-2xl font-bold font-mono ${session.balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                ${Math.abs(session.balance).toFixed(2)}
+                              </p>
+                              <p className="text-xs text-gray-500">{session.balance > 0 ? 'they owe' : 'you owe'}</p>
+                            </div>
+                          </div>
+                          <button onClick={() => handleSettleClick(selectedFriend, session.sessionId)}
+                            className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 py-2 rounded-lg text-sm border border-emerald-500/30">
+                            Settle This Tab
+                          </button>
+                          <button onClick={() => toggleSettledExpansion(`active-${session.sessionId}`)}
+                            className="w-full mt-2 text-gray-400 hover:text-white flex items-center justify-center gap-2 text-sm">
+                            {expandedSettledTabs[`active-${session.sessionId}`] ? 'Hide' : 'View'} Details
+                            {expandedSettledTabs[`active-${session.sessionId}`] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </button>
+                          {expandedSettledTabs[`active-${session.sessionId}`] && (
+                            <div className="space-y-2 mt-3 pt-3 border-t border-white/10">
+                              {session.tabs.map(tab => (
+                                <div key={tab.id} className="bg-slate-800/30 rounded-lg p-3">
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex-1">
+                                      <p className="font-semibold">{tab.description || 'No description'}</p>
+                                      <p className="text-xs text-gray-500">{new Date(tab.date).toLocaleDateString()}</p>
+                                    </div>
+                                    <div className="flex items-start gap-2">
+                                      <p className={`text-lg font-bold font-mono ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        ${tab.amount}
+                                      </p>
+                                      <button onClick={(e) => { 
+                                        e.stopPropagation(); 
+                                        const isCreator = tab.from_user_id === currentUser.id;
+                                        if (isCreator) {
+                                          setEditingExpense(tab.id);
+                                        } else {
+                                          setSuggestingEdit(tab.id);
+                                        }
+                                        setEditExpenseForm({ 
+                                          amount: tab.amount, 
+                                          description: tab.description, 
+                                          date: tab.date, 
+                                          reason: '' 
+                                        });
+                                      }}
+                                        className="text-gray-400 hover:text-white p-1">
+                                        <Edit2 className="w-4 h-4" />
+                                      </button>
+                                      {tab.from_user_id === currentUser.id && (
+                                        <button onClick={(e) => { e.stopPropagation(); deleteTab(tab.id); }}
+                                          className="text-red-400/70 hover:text-red-400 p-1">
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {(editingExpense === tab.id || suggestingEdit === tab.id) && (
+                                    <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                                      <input type="number" step="0.01" value={editExpenseForm.amount} 
+                                        onChange={(e) => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })}
+                                        className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" placeholder="Amount" />
+                                      <input type="text" value={editExpenseForm.description} 
+                                        onChange={(e) => setEditExpenseForm({ ...editExpenseForm, description: e.target.value })}
+                                        className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" placeholder="Description" />
+                                      <input type="date" value={editExpenseForm.date} 
+                                        onChange={(e) => setEditExpenseForm({ ...editExpenseForm, date: e.target.value })}
+                                        className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" />
+                                      {suggestingEdit === tab.id && (
+                                        <input type="text" value={editExpenseForm.reason} 
+                                          onChange={(e) => setEditExpenseForm({ ...editExpenseForm, reason: e.target.value })}
+                                          className="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white" 
+                                          placeholder="Reason for edit (optional)" />
+                                      )}
+                                      <div className="flex gap-2">
+                                        <button onClick={() => updateTab(tab.id, editingExpense === tab.id)}
+                                          className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2 rounded-lg text-sm">
+                                          {editingExpense === tab.id ? 'Save' : 'Suggest Edit'}
+                                        </button>
+                                        <button onClick={() => { setEditingExpense(null); setSuggestingEdit(null); }}
+                                          className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm">
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {sessions.pending.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-bold text-gray-300">Pending Settlement</h3>
+                      {sessions.pending.map(session => (
+                        <div key={session.sessionId} className="glassmorphism rounded-xl p-4 border border-yellow-500/30">
+                          <div className="flex items-center justify-between mb-3">
+                            <div>
+                              <p className="text-sm text-yellow-400">⏳ Awaiting Approval</p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {session.count} expense{session.count !== 1 ? 's' : ''}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className={`text-2xl font-bold font-mono ${session.balance > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                ${Math.abs(session.balance).toFixed(2)}
+                              </p>
+                            </div>
+                          </div>
+                          {session.balance > 0 && (
+                            <div className="flex gap-2">
+                              <button onClick={() => approveSettlement(session.sessionId)}
+                                className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2 rounded-lg text-sm">
+                                Approve
+                              </button>
+                              <button onClick={() => denySettlement(session.sessionId)}
+                                className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg text-sm">
+                                Deny
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {sessions.settled.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-bold text-gray-300">Settled Tabs</h3>
+                      {sessions.settled.map(session => (
+                        <div key={session.sessionId} className="glassmorphism rounded-xl p-4 border opacity-75">
+                          <button onClick={() => toggleSettledExpansion(`settled-${session.sessionId}`)}
+                            className="w-full flex items-center justify-between text-left">
+                            <div>
+                              <p className="font-semibold text-gray-300">{session.count} expense{session.count !== 1 ? 's' : ''}</p>
+                              <p className="text-sm text-gray-400">
+                                {session.earliestDate.toLocaleDateString()} - {session.latestDate.toLocaleDateString()}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                Settled {new Date(session.settledDate).toLocaleDateString()}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <div className="text-right">
+                                <p className="text-sm text-gray-400">You owed: ${session.iOwe.toFixed(2)}</p>
+                                <p className="text-sm text-gray-400">They owed: ${session.theyOwe.toFixed(2)}</p>
+                              </div>
+                              {expandedSettledTabs[`settled-${session.sessionId}`] ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                            </div>
+                          </button>
+                          {expandedSettledTabs[`settled-${session.sessionId}`] && (
+                            <div className="space-y-2 mt-3 pt-3 border-t border-white/10">
+                              {session.tabs.map(tab => (
+                                <div key={tab.id} className="bg-slate-800/30 rounded-lg p-3">
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <p className="font-semibold text-sm">{tab.description || 'No description'}</p>
+                                      <p className="text-xs text-gray-500">{new Date(tab.date).toLocaleDateString()}</p>
+                                    </div>
+                                    <p className={`font-mono font-bold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                      ${tab.amount}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
-
-        {view === 'groups' && (
+{view === 'groups' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">Groups</h2>
@@ -1569,7 +1778,7 @@ if (!session || !currentUser) {
                       </div>
                       <div>
                         <p className="font-semibold">{group.name}</p>
-                        <p className="text-sm text-gray-400">{group.members?.length || 0} members</p>
+                        <p className="text-sm text-gray-400">{groupMembers[group.id]?.length || 0} members</p>
                       </div>
                     </div>
                     <ArrowRight className="w-5 h-5 text-gray-400" />
@@ -1625,15 +1834,15 @@ if (!session || !currentUser) {
             <button onClick={() => setView('groups')} className="text-gray-400 hover:text-white flex items-center gap-2">← Back to Groups</button>
             <div className="glassmorphism rounded-2xl p-6 border">
               <h2 className="text-2xl font-bold mb-4">{selectedGroup.name}</h2>
-              <div className="flex flex-wrap gap-2">
-                {selectedGroup.members?.map(member => (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {groupMembers[selectedGroup.id]?.map(member => (
                   <div key={member.id} className="bg-slate-800/50 rounded-lg px-3 py-2 text-sm flex items-center gap-2">
                     <User className="w-4 h-4 text-gray-400" />
                     <span>{member.name}</span>
                   </div>
                 ))}
               </div>
-              <button onClick={() => setView('addGroupExpense')} className="w-full mt-4 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+              <button onClick={() => setView('addGroupExpense')} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
                 <Plus className="w-4 h-4" />
                 Add Expense
               </button>
@@ -1654,7 +1863,7 @@ if (!session || !currentUser) {
                       </div>
                       <div className="text-right">
                         <p className="text-2xl font-bold font-mono text-emerald-400">${parseFloat(expense.amount).toFixed(2)}</p>
-                        <p className="text-xs text-gray-500">paid by {selectedGroup.members?.find(m => m.id === expense.paid_by_user_id)?.name}</p>
+                        <p className="text-xs text-gray-500">paid by {groupMembers[selectedGroup.id]?.find(m => m.id === expense.paid_by_user_id)?.name}</p>
                       </div>
                     </div>
                   </div>
@@ -1688,7 +1897,7 @@ if (!session || !currentUser) {
                   <select value={groupExpenseForm.paidBy || ''} onChange={(e) => setGroupExpenseForm({ ...groupExpenseForm, paidBy: e.target.value })}
                     className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-white">
                     <option value="">Select who paid</option>
-                    {selectedGroup.members?.map(member => (
+                    {groupMembers[selectedGroup.id]?.map(member => (
                       <option key={member.id} value={member.id}>{member.name}</option>
                     ))}
                   </select>
@@ -1696,7 +1905,7 @@ if (!session || !currentUser) {
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Split With</label>
                   <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {selectedGroup.members?.map(member => (
+                    {groupMembers[selectedGroup.id]?.map(member => (
                       <button key={member.id} onClick={() => toggleMemberInExpense(member.id)}
                         className={`w-full flex items-center justify-between p-3 rounded-lg transition-all ${groupExpenseForm.splitWith.includes(member.id) ? 'bg-emerald-500/20 border border-emerald-500/50' : 'bg-slate-800/30 border border-white/10'}`}>
                         <span className="text-sm">{member.name}</span>
@@ -1722,53 +1931,67 @@ if (!session || !currentUser) {
         {view === 'history' && (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold">Settled Tabs History</h2>
-            {Object.keys(getSettledTabs()).length === 0 ? (
-              <div className="glassmorphism rounded-2xl p-8 text-center border">
-                <HistoryIcon className="w-12 h-12 mx-auto mb-3 text-gray-600" />
-                <p className="text-gray-400">No settled tabs yet</p>
-              </div>
-            ) : (
-              Object.values(getSettledTabs()).map(({ friend, tabs: settledTabs, totalAmount, count, earliestDate, latestDate, settledDate }) => (
-                <div key={friend.id} className="space-y-3">
-                  <button onClick={() => toggleSettledExpansion(friend.id)}
-                    className="w-full glassmorphism rounded-xl p-4 border flex items-center justify-between text-left hover:border-white/20 transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className="bg-slate-700/50 p-3 rounded-full">
-                        <User className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <h3 className="text-xl font-bold">{friend.name}</h3>
-                        <p className="text-sm text-gray-400">{earliestDate.toLocaleDateString()} - {latestDate.toLocaleDateString()}</p>
-                        <p className="text-xs text-gray-500">Settled on {new Date(settledDate).toLocaleDateString()}</p>
-                      </div>
+            {friends.map(friend => {
+              const sessions = getTabSessionsByFriend(friend.id);
+              if (sessions.settled.length === 0) return null;
+              
+              const totalYouOwed = sessions.settled.reduce((sum, s) => sum + s.iOwe, 0);
+              const totalTheyOwed = sessions.settled.reduce((sum, s) => sum + s.theyOwe, 0);
+              
+              return (
+                <div key={friend.id} className="glassmorphism rounded-2xl p-6 border">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="bg-slate-700/50 p-3 rounded-full">
+                      <User className="w-6 h-6" />
                     </div>
-                    <div className="text-right flex items-center gap-3">
-                      <div>
-                        <p className="text-gray-400 text-sm">{count} expense{count !== 1 ? 's' : ''}</p>
-                      </div>
-                      {expandedSettledTabs[friend.id] ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+                    <div className="flex-1">
+                      <h3 className="text-xl font-bold">{friend.name}</h3>
+                      <p className="text-sm text-gray-400">@{friend.username}</p>
                     </div>
-                  </button>
-                  {expandedSettledTabs[friend.id] && (
-                    <div className="space-y-2 ml-4">
-                      {settledTabs.map(tab => (
-                        <div key={tab.id} className="glassmorphism rounded-lg p-3 border opacity-60">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <p className="font-semibold">{tab.description || 'No description'}</p>
-                              <p className="text-xs text-gray-500">{new Date(tab.date).toLocaleDateString()}</p>
-                            </div>
-                            <p className={`font-mono font-bold ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>
-                              ${tab.amount}
-                            </p>
-                          </div>
+                    <div className="text-right text-sm">
+                      <p className="text-gray-400">Total you owed: <span className="text-red-400 font-mono">${totalYouOwed.toFixed(2)}</span></p>
+                      <p className="text-gray-400">Total they owed: <span className="text-emerald-400 font-mono">${totalTheyOwed.toFixed(2)}</span></p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {sessions.settled.map(session => (
+                      <button key={session.sessionId} onClick={() => toggleSettledExpansion(`history-${friend.id}-${session.sessionId}`)}
+                        className="w-full glassmorphism rounded-lg p-3 border flex items-center justify-between text-left hover:border-white/20 transition-all">
+                        <div>
+                          <p className="font-semibold">{session.count} expense{session.count !== 1 ? 's' : ''}</p>
+                          <p className="text-sm text-gray-400">
+                            {session.earliestDate.toLocaleDateString()} - {session.latestDate.toLocaleDateString()}
+                          </p>
+                          <p className="text-xs text-gray-500">Settled {new Date(session.settledDate).toLocaleDateString()}</p>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        <div className="flex items-center gap-3">
+                          <div className="text-right text-sm">
+                            <p className="text-gray-400">You: ${session.iOwe.toFixed(2)}</p>
+                            <p className="text-gray-400">Them: ${session.theyOwe.toFixed(2)}</p>
+                          </div>
+                          {expandedSettledTabs[`history-${friend.id}-${session.sessionId}`] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </div>
+                      </button>
+                    ))}
+                    {expandedSettledTabs[`history-${friend.id}-${session.sessionId}`] && (
+                      <div className="space-y-2 ml-4">
+                        {session.tabs.map(tab => (
+                          <div key={tab.id} className="bg-slate-800/30 rounded-lg p-3">
+                            <div className="flex justify-between">
+                              <div>
+                                <p className="font-semibold text-sm">{tab.description}</p>
+                                <p className="text-xs text-gray-500">{new Date(tab.date).toLocaleDateString()}</p>
+                              </div>
+                              <p className={`font-mono ${tab.type === 'owed' ? 'text-emerald-400' : 'text-red-400'}`}>${tab.amount}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              ))
-            )}
+              );
+            }).filter(Boolean)}
           </div>
         )}
 
@@ -1778,28 +2001,19 @@ if (!session || !currentUser) {
               <h2 className="text-2xl font-bold mb-6">Profile Settings</h2>
               <div className="space-y-6">
                 <div className="flex flex-col items-center">
-                  <div className="w-32 h-32 rounded-full bg-slate-700 flex items-center justify-center mb-4">
-                    <User className="w-16 h-16 text-gray-400" />
+                  <div className="w-32 h-32 rounded-full bg-slate-700 flex items-center justify-center mb-4 overflow-hidden">
+                    {currentUser.profile_picture_url ? (
+                      <img src={currentUser.profile_picture_url} alt={currentUser.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <User className="w-16 h-16 text-gray-400" />
+                    )}
                   </div>
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={(e) => e.target.files[0] && setProfilePictureFile(e.target.files[0])} className="hidden" />
-                  {profilePictureFile ? (
-                    <div className="flex gap-2">
-                      <button onClick={() => uploadProfilePicture(profilePictureFile)} disabled={uploadingPicture}
-                        className="bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-700 text-white px-4 py-2 rounded-lg flex items-center gap-2">
-                        <Upload className="w-4 h-4" />
-                        {uploadingPicture ? 'Uploading...' : 'Upload'}
-                      </button>
-                      <button onClick={() => setProfilePictureFile(null)} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg">
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button onClick={() => fileInputRef.current?.click()}
-                      className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg flex items-center gap-2">
-                      <Camera className="w-4 h-4" />
-                      Change Picture
-                    </button>
-                  )}
+                  <input ref={fileInputRef} type="file" accept="image/*" onChange={(e) => e.target.files[0] && uploadProfilePicture(e.target.files[0])} className="hidden" />
+                  <button onClick={() => fileInputRef.current?.click()} disabled={uploadingPicture}
+                    className="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 text-white px-4 py-2 rounded-lg flex items-center gap-2">
+                    <Camera className="w-4 h-4" />
+                    {uploadingPicture ? 'Uploading...' : 'Change Picture'}
+                  </button>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Name (Display Name)</label>
@@ -1823,7 +2037,7 @@ if (!session || !currentUser) {
                       </button>
                     </div>
                   )}
-                  <p className="text-xs text-gray-500 mt-1">This is your display name (editable)</p>
+                  <p className="text-xs text-gray-500 mt-1">Your display name (editable)</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Username</label>
@@ -1835,60 +2049,6 @@ if (!session || !currentUser) {
                   <input type="email" value={currentUser.email} disabled className="w-full bg-slate-800/50 border border-white/10 rounded-xl px-4 py-3 text-gray-500" />
                 </div>
               </div>
-            </div>
-          </div>
-        )}
-
-        {showSettleModal && settleModalData && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="glassmorphism rounded-2xl p-6 max-w-md w-full border">
-              <h2 className="text-2xl font-bold mb-4">Settle All Tabs</h2>
-              <div className="bg-slate-800/50 rounded-lg p-4 mb-6 border border-white/10">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-gray-400">Friend:</span>
-                  <span className="font-semibold">{settleModalData.friend.name}</span>
-                </div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-gray-400">Total Expenses:</span>
-                  <span className="font-semibold">{settleModalData.tabCount}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">Net Amount:</span>
-                  <span className={`text-2xl font-bold font-mono ${settleModalData.isOwed ? 'text-emerald-400' : 'text-red-400'}`}>
-                    ${Math.abs(settleModalData.balance).toFixed(2)}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-500 mt-2">
-                  {settleModalData.isOwed ? 'They owe you' : 'You owe them'}
-                </p>
-              </div>
-              {settleModalData.isOwed ? (
-                <div className="space-y-3">
-                  <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 text-sm">
-                    <AlertCircle className="inline w-4 h-4 mr-2 text-emerald-400" />
-                    You're clearing their debt. This will settle all tabs and notify them.
-                  </div>
-                  <button onClick={confirmSettle}
-                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 rounded-xl">
-                    Confirm Settlement
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-sm">
-                    <AlertCircle className="inline w-4 h-4 mr-2 text-yellow-400" />
-                    Settlement request will be sent to {settleModalData.friend.name} for approval.
-                  </div>
-                  <button onClick={confirmSettle}
-                    className="w-full bg-red-500 hover:bg-red-600 text-white font-semibold py-3 rounded-xl">
-                    Send Settlement Request
-                  </button>
-                </div>
-              )}
-              <button onClick={() => { setShowSettleModal(false); setSettleModalData(null); }}
-                className="w-full mt-3 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-xl">
-                Cancel
-              </button>
             </div>
           </div>
         )}
